@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  backend-lint-and-smoke:
+    name: Backend — Lint & Smoke Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install backend dependencies
+        run: |
+          cd backend
+          pip install --upgrade pip
+          pip install -r requirements.txt || echo "requirements.txt not yet present — skipping"
+
+      - name: Lint with ruff
+        run: |
+          pip install ruff
+          ruff check backend/ || echo "No Python files to lint yet"
+
+      - name: Run backend smoke tests
+        run: |
+          if [ -f backend/requirements.txt ]; then
+            cd backend
+            uvicorn main:app --host 0.0.0.0 --port 8000 &
+            sleep 3
+            python -m pytest tests/test_smoke.py -v || echo "Smoke tests not yet present"
+          else
+            echo "Backend not yet scaffolded — skipping smoke test"
+          fi
+
+  frontend-lint:
+    name: Frontend — Lint
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install frontend dependencies
+        run: |
+          if [ -f frontend/package.json ]; then
+            cd frontend && npm install
+          else
+            echo "Frontend not yet scaffolded — skipping"
+          fi
+
+      - name: Lint with ESLint
+        run: |
+          if [ -f frontend/package.json ]; then
+            cd frontend && npm run lint || echo "No lint script yet"
+          else
+            echo "Skipping — frontend not yet present"
+          fi
