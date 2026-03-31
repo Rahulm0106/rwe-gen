@@ -1,64 +1,119 @@
+
 # DB — OMOP PostgreSQL Setup
 
 **Owner:** Laya Fakher  
 **Role:** DB / OMOP Engineer  
-**Stack:** PostgreSQL · Synthea · pgAdmin · Java (OpenJDK)
+**Stack:** PostgreSQL · pgAdmin 4 · Synthea · Java (OpenJDK)
 
 ---
 
 ## Overview
 
-This document describes the setup of the local database environment for the RWE-Gen project.  
-The goal for Day 1 is to generate synthetic data, set up PostgreSQL, create the project database, and verify connectivity.
+This document describes the database setup and initial data-loading workflow completed for Sprint 1 of the RWE-Gen project.
+
+The purpose of this setup is to:
+- generate synthetic healthcare data using Synthea,
+- configure a local PostgreSQL database,
+- create OMOP-like core tables needed for the project MVP,
+- load selected Synthea CSV data into these tables,
+- and verify that Type 2 Diabetes records are present and queryable.
 
 ---
 
-## 1. Synthea Setup and Data Generation
+## 1. Git Branch
+
+The database setup work was completed on the following branch:
+
+```text
+feat/laya/db-setup
+````
+
+---
+
+## 2. Synthea Setup and Data Generation
 
 ### Clone Synthea
 
 ```bash
 git clone https://github.com/synthetichealth/synthea.git
 cd synthea
-````
+```
 
-### Generate Synthetic Patient Data (T2D)
+### Java Verification
+
+Java was required before running Synthea.
+
+```bash
+java -version
+```
+
+Installed version used:
+
+```text
+OpenJDK 17.0.18
+```
+
+### Initial Attempt
+
+The first Synthea run used:
 
 ```bash
 .\run_synthea.bat -p 1000 --exporter.fhir.export=false --exporter.csv.export=true -m diabetes
 ```
 
+This completed successfully, but the resulting CSV export did not include all required files such as `conditions.csv` and `medications.csv`.
+
+### Final Successful Data Generation
+
+The corrected run used:
+
+```bash
+.\run_synthea.bat -p 1000 --exporter.csv.export=true
+```
+
 ### Result
 
 * Successfully generated **1000 synthetic patients**
-* Output files located in:
+* Output files stored in:
 
+```text
+D:\IIT\Health Informatics\Project\tools\synthea\output\csv
 ```
-tools/synthea/output/csv
-```
+
+### Key CSV Files Used
+
+* `patients.csv`
+* `encounters.csv`
+* `conditions.csv`
+* `medications.csv`
+* `observations.csv`
 
 ---
 
-## 2. PostgreSQL Setup
+## 3. PostgreSQL Setup
 
 ### Installation
 
-* PostgreSQL installed locally (Windows)
-* pgAdmin 4 used for database management
+* PostgreSQL installed locally on Windows
+* pgAdmin 4 used for database creation and query execution
+
+### PostgreSQL Version
+
+```text
+PostgreSQL 18.3
+```
 
 ### Database Creation
 
-Using pgAdmin:
+Created database:
 
-* Created database:
-
-```
+```text
 omop_rwe
 ```
 
 ### Connection Verification
 
-Executed the following query in pgAdmin:
+Executed in pgAdmin:
 
 ```sql
 SELECT current_database();
@@ -71,9 +126,9 @@ SELECT current_database();
 
 ---
 
-## 3. Test Query (Verification)
+## 4. Initial Test Query
 
-To verify database functionality:
+To confirm the database was working correctly, the following temporary test table was created:
 
 ```sql
 CREATE TABLE test_connection (
@@ -92,17 +147,93 @@ SELECT * FROM test_connection;
 * Insert successful
 * Query returned expected result
 
----
-
-## 4. OMOP Schema Status
-
-* OMOP CDM schema loading: **NOT started yet**
-* Required tables (`person`, `concept`) not yet created
-* This will be completed in the next step (Day 2)
+This table remains in the database as a basic connection test artifact.
 
 ---
 
-## 5. T2D Verification Query (Planned)
+## 5. OMOP-Like Schema Creation
+
+A minimal OMOP-like schema was created for Sprint 1 to support core project functionality.
+
+### Tables Created
+
+* `person`
+* `concept`
+* `visit_occurrence`
+* `condition_occurrence`
+* `drug_exposure`
+* `observation`
+* `measurement`
+
+### Notes
+
+This is not yet a full official OMOP CDM implementation.
+Instead, it is a simplified schema sufficient for Sprint 1 goals:
+
+* local database setup,
+* structured healthcare data loading,
+* and verification queries for T2D cohort support.
+
+---
+
+## 6. Staging Tables and Data Loading
+
+To load Synthea CSV files safely, staging tables were created first:
+
+* `staging_patients`
+* `staging_encounters`
+* `staging_conditions`
+* `staging_medications`
+
+CSV files were imported into these staging tables through pgAdmin.
+
+### Data Mapping Workflow
+
+The following mapping process was used:
+
+* `patients.csv` → `staging_patients` → `person`
+* `encounters.csv` → `staging_encounters` → `visit_occurrence`
+* `conditions.csv` → `staging_conditions` → `condition_occurrence`
+* `medications.csv` → `staging_medications` → `drug_exposure`
+
+Additional mapping tables used:
+
+* `patient_map`
+* `encounter_map`
+
+These mapping tables were needed because:
+
+* Synthea IDs are UUID strings,
+* while the local OMOP-like schema uses numeric IDs for keys.
+
+---
+
+## 7. T2D Verification and Mapping Logic
+
+### Initial Problem
+
+The first T2D verification query returned `0` rows because the initial mapping logic assumed ICD-10 codes such as `E11`.
+
+However, the Synthea `conditions.csv` file used **SNOMED-coded diagnoses**, for example:
+
+* `44054006` → `Diabetes mellitus type 2 (disorder)`
+
+### Fix Applied
+
+The `condition_occurrence` loading logic was updated to map Type 2 Diabetes using the `description` field instead of relying on ICD-10-style codes.
+
+Conditions matching descriptions such as:
+
+* `diabetes mellitus type 2`
+* `due to type 2 diabetes`
+
+were mapped to:
+
+```text
+condition_concept_id = 201826
+```
+
+### Final T2D Verification Query
 
 ```sql
 SELECT COUNT(*)
@@ -110,67 +241,109 @@ FROM condition_occurrence
 WHERE condition_concept_id = 201826;
 ```
 
-Expected result after OMOP loading:
+### Final Result
 
+```text
+268
 ```
-> 0 rows
+
+This confirms that Type 2 Diabetes rows are present and queryable in the loaded data.
+
+---
+
+## 8. Current Verification Summary
+
+### Condition Concept Breakdown
+
+```sql
+SELECT condition_concept_id, COUNT(*)
+FROM condition_occurrence
+GROUP BY condition_concept_id;
 ```
 
----
+### Current Result
 
-## 6. Environment Details
+* `201826` → `268`
+* `0` → `41862`
 
-| Item            | Value                                       |
-| --------------- | ------------------------------------------- |
-| OS              | Windows 11                                  |
-| Java version    | OpenJDK 17.0.18                             |
-| Synthea version | Latest (cloned from GitHub on Mar 31, 2026) |
-| PostgreSQL ver. | 18.3                                        |
-| Patient count   | 1000                                        |
-| T2D row count   | Not yet available                           |
+This is acceptable for Sprint 1 because the required T2D mapping now works and returns a non-zero result.
 
 ---
 
-## 7. Issues Encountered and Fixes
+## 9. Environment Details
 
-### Java not recognized
-
-* Issue: `java` command not found
-* Fix: Installed OpenJDK (Temurin 17)
-
-### Synthea build failure (Gradle error)
-
-* Issue: `Unsupported class file major version`
-* Fix: Corrected Java environment and reran Synthea
-
-### PostgreSQL connection issues (CLI)
-
-* Issue: `connection refused` on localhost:5432
-* Fix: Used pgAdmin to connect and manage database successfully
+| Item                    | Value                                    |
+| ----------------------- | ---------------------------------------- |
+| OS                      | Windows 11                               |
+| Java version            | OpenJDK 17.0.18                          |
+| Synthea version         | Latest clone from GitHub on Mar 31, 2026 |
+| PostgreSQL version      | 18.3                                     |
+| Database name           | omop_rwe                                 |
+| Patient count generated | 1000                                     |
+| Final T2D row count     | 268                                      |
 
 ---
 
-## 8. Current Status (End of Day 1)
+## 10. Issues Encountered and Fixes
 
-* Branch created: `feat/laya/db-setup`
-* Synthea data generation: COMPLETE
-* PostgreSQL setup: COMPLETE
-* Database `omop_rwe`: CREATED
-* Query execution: VERIFIED
-* OMOP schema: NOT YET LOADED
+### 1. Java not recognized
+
+* **Issue:** `java` command was not found
+* **Fix:** Installed Temurin OpenJDK 17
+
+### 2. Synthea Gradle error
+
+* **Issue:** `Unsupported class file major version`
+* **Fix:** Corrected Java environment and reran after clearing Gradle state
+
+### 3. PostgreSQL CLI connection issues
+
+* **Issue:** `psql` connection failed on localhost
+* **Fix:** Switched to pgAdmin for successful database management
+
+### 4. Missing `conditions.csv` in first Synthea run
+
+* **Issue:** Initial diabetes-module-only run did not produce all needed CSV files
+* **Fix:** Reran Synthea without `-m diabetes` using full CSV export
+
+### 5. T2D mapping returned zero initially
+
+* **Issue:** Initial mapping assumed ICD-10-like `E11` codes
+* **Fix:** Updated mapping logic to use SNOMED-based descriptions from `conditions.csv`
 
 ---
 
-## 9. Next Steps (Day 2)
+## 11. Current Sprint 1 Status
 
-* Load OMOP CDM schema into PostgreSQL
-* Create core tables:
+Completed:
 
-  * person
-  * concept
-  * condition_occurrence
-* Begin data integration / mapping
-* Run T2D verification query
+* branch creation
+* Synthea setup
+* Java setup
+* PostgreSQL setup
+* database creation
+* OMOP-like schema creation
+* CSV staging imports
+* core table loading
+* Type 2 Diabetes verification query
 
+Current status:
 
+* PostgreSQL running
+* schema created
+* data loaded
+* T2D query working
+
+---
+
+## 12. Next Steps
+
+Next database tasks include:
+
+* load or map additional `observation` and `measurement` data if needed,
+* finalize and clean verification queries,
+* refine SQL templates for cohort characterization,
+* prepare parameterized SQL query templates for Sprint 2.
+
+---
 
