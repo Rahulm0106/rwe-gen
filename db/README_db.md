@@ -1,4 +1,3 @@
-
 # DB — OMOP PostgreSQL Setup
 
 **Owner:** Laya Fakher  
@@ -12,6 +11,7 @@
 This document describes the database setup and initial data-loading workflow completed for Sprint 1 of the RWE-Gen project.
 
 The purpose of this setup is to:
+
 - generate synthetic healthcare data using Synthea,
 - configure a local PostgreSQL database,
 - create OMOP-like core tables needed for the project MVP,
@@ -172,7 +172,9 @@ Instead, it is a simplified schema sufficient for Sprint 1 goals:
 
 * local database setup,
 * structured healthcare data loading,
-* and verification queries for T2D cohort support.
+* verification queries for T2D cohort support.
+
+The `concept` table was created successfully but has not yet been fully populated with official OMOP vocabulary content. Full vocabulary loading is deferred to later work beyond Sprint 1.
 
 ---
 
@@ -184,6 +186,7 @@ To load Synthea CSV files safely, staging tables were created first:
 * `staging_encounters`
 * `staging_conditions`
 * `staging_medications`
+* `staging_observations`
 
 CSV files were imported into these staging tables through pgAdmin.
 
@@ -195,6 +198,9 @@ The following mapping process was used:
 * `encounters.csv` → `staging_encounters` → `visit_occurrence`
 * `conditions.csv` → `staging_conditions` → `condition_occurrence`
 * `medications.csv` → `staging_medications` → `drug_exposure`
+* `observations.csv` → `staging_observations` → `measurement` / `observation`
+
+### Mapping Support Tables
 
 Additional mapping tables used:
 
@@ -203,8 +209,17 @@ Additional mapping tables used:
 
 These mapping tables were needed because:
 
-* Synthea IDs are UUID strings,
+* Synthea IDs are UUID-style string identifiers,
 * while the local OMOP-like schema uses numeric IDs for keys.
+
+### Observation and Measurement Mapping Logic
+
+Since `observations.csv` contains mixed-value data, the following simplified mapping was used:
+
+* rows with numeric `value` fields were inserted into `measurement`
+* rows with non-numeric `value` fields were inserted into `observation`
+
+This approach is sufficient for Sprint 1 verification and keeps the data usable for later cohort analysis work.
 
 ---
 
@@ -253,6 +268,18 @@ This confirms that Type 2 Diabetes rows are present and queryable in the loaded 
 
 ## 8. Current Verification Summary
 
+### Final Core Table Counts
+
+| Table                | Row Count |
+| -------------------- | --------: |
+| person               |      1152 |
+| concept              |         0 |
+| visit_occurrence     |     67553 |
+| condition_occurrence |     42130 |
+| drug_exposure        |     56342 |
+| observation          |    327835 |
+| measurement          |    550931 |
+
 ### Condition Concept Breakdown
 
 ```sql
@@ -266,7 +293,7 @@ GROUP BY condition_concept_id;
 * `201826` → `268`
 * `0` → `41862`
 
-This is acceptable for Sprint 1 because the required T2D mapping now works and returns a non-zero result.
+This is acceptable for Sprint 1 because the required T2D mapping works and returns a non-zero result.
 
 ---
 
@@ -311,6 +338,16 @@ This is acceptable for Sprint 1 because the required T2D mapping now works and r
 * **Issue:** Initial mapping assumed ICD-10-like `E11` codes
 * **Fix:** Updated mapping logic to use SNOMED-based descriptions from `conditions.csv`
 
+### 6. Observation and measurement tables were initially empty
+
+* **Issue:** `observation` and `measurement` had zero rows because `observations.csv` had not yet been imported into a staging table
+* **Fix:** Created `staging_observations`, imported `observations.csv`, then mapped numeric values into `measurement` and non-numeric values into `observation`
+
+### 7. Mapping column name mismatch during observation loading
+
+* **Issue:** Initial insert query used a non-existent column name `patient_uuid`
+* **Fix:** Corrected the join to use the actual mapping column `synthea_patient_id`
+
 ---
 
 ## 11. Current Sprint 1 Status
@@ -323,16 +360,21 @@ Completed:
 * PostgreSQL setup
 * database creation
 * OMOP-like schema creation
-* CSV staging imports
+* staging imports
+* mapping table creation
 * core table loading
+* observation and measurement loading
 * Type 2 Diabetes verification query
+* verification SQL script preparation
 
 Current status:
 
 * PostgreSQL running
 * schema created
 * data loaded
+* verification queries working
 * T2D query working
+* Sprint 1 database deliverable complete
 
 ---
 
@@ -340,10 +382,11 @@ Current status:
 
 Next database tasks include:
 
-* load or map additional `observation` and `measurement` data if needed,
-* finalize and clean verification queries,
+* clean and organize SQL scripts for repository submission,
 * refine SQL templates for cohort characterization,
-* prepare parameterized SQL query templates for Sprint 2.
+* prepare parameterized SQL query templates for Sprint 2,
+* improve concept vocabulary handling if needed later,
+* support backend integration with reusable query outputs.
 
----
+```
 
