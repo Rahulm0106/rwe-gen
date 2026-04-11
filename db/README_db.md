@@ -1,86 +1,37 @@
-# DB — OMOP PostgreSQL Setup
+# DB — OMOP Setup (Sprint 1)
 
 **Owner:** Laya Fakher  
-**Role:** DB / OMOP Engineer  
-**Stack:** PostgreSQL · pgAdmin 4 · Synthea · Java (OpenJDK)
+**Role:** DB / Synthea / SQL (Critical Path)  
+**Database:** PostgreSQL (`omop_rwe`)  
+**Data Source:** Synthea (CSV Export)
 
 ---
 
-## Overview
+# 🎯 Sprint 1 Objective
 
-This document describes the database setup and initial data-loading workflow completed for Sprint 1 of the RWE-Gen project.
+The goal of Sprint 1 is to build a complete local data pipeline that:
 
-The purpose of this setup is to:
+- generates synthetic healthcare data using Synthea
+- loads the data into PostgreSQL
+- maps it into OMOP-like tables
+- verifies the presence of Type 2 Diabetes (T2D)
+- ensures the dataset supports downstream SQL analytics
 
-- generate synthetic healthcare data using Synthea,
-- configure a local PostgreSQL database,
-- create OMOP-like core tables needed for the project MVP,
-- load selected Synthea CSV data into these tables,
-- and verify that Type 2 Diabetes records are present and queryable.
+This work is the **critical path** for the project, as all later components depend on this dataset.
 
 ---
 
-## 1. Git Branch
+# ⚙️ Data Generation
 
-The database setup work was completed on the following branch:
+## Command Used
 
-```text
-feat/laya/db-setup
+```bash
+.\run_synthea.bat -p 10000 --exporter.csv.export=true
 ````
 
----
+## Output
 
-## 2. Synthea Setup and Data Generation
-
-### Clone Synthea
-
-```bash
-git clone https://github.com/synthetichealth/synthea.git
-cd synthea
-```
-
-### Java Verification
-
-Java was required before running Synthea.
-
-```bash
-java -version
-```
-
-Installed version used:
-
-```text
-OpenJDK 17.0.18
-```
-
-### Initial Attempt
-
-The first Synthea run used:
-
-```bash
-.\run_synthea.bat -p 1000 --exporter.fhir.export=false --exporter.csv.export=true -m diabetes
-```
-
-This completed successfully, but the resulting CSV export did not include all required files such as `conditions.csv` and `medications.csv`.
-
-### Final Successful Data Generation
-
-The corrected run used:
-
-```bash
-.\run_synthea.bat -p 1000 --exporter.csv.export=true
-```
-
-### Result
-
-* Successfully generated **1000 synthetic patients**
-* Output files stored in:
-
-```text
-D:\IIT\Health Informatics\Project\tools\synthea\output\csv
-```
-
-### Key CSV Files Used
+Generated **10,000 synthetic patients** with the following CSV files:
 
 * `patients.csv`
 * `encounters.csv`
@@ -90,97 +41,32 @@ D:\IIT\Health Informatics\Project\tools\synthea\output\csv
 
 ---
 
-## 3. PostgreSQL Setup
+# 🗄️ Database Setup
 
-### Installation
-
-* PostgreSQL installed locally on Windows
-* pgAdmin 4 used for database creation and query execution
-
-### PostgreSQL Version
-
-```text
-PostgreSQL 18.3
-```
-
-### Database Creation
-
-Created database:
-
-```text
-omop_rwe
-```
-
-### Connection Verification
-
-Executed in pgAdmin:
-
-```sql
-SELECT current_database();
-```
-
-### Result
-
-* Database connection: SUCCESS
-* Query execution: SUCCESS
+* PostgreSQL used locally
+* Database name: `omop_rwe`
+* Managed via pgAdmin
+* Schema is a **simplified OMOP-like structure** (not full OMOP CDM)
 
 ---
 
-## 4. Initial Test Query
-
-To confirm the database was working correctly, the following temporary test table was created:
-
-```sql
-CREATE TABLE test_connection (
-    id SERIAL PRIMARY KEY,
-    name TEXT
-);
-
-INSERT INTO test_connection (name) VALUES ('Laya');
-
-SELECT * FROM test_connection;
-```
-
-### Result
-
-* Table created successfully
-* Insert successful
-* Query returned expected result
-
-This table remains in the database as a basic connection test artifact.
-
----
-
-## 5. OMOP-Like Schema Creation
-
-A minimal OMOP-like schema was created for Sprint 1 to support core project functionality.
-
-### Tables Created
+# 🧱 Core Tables
 
 * `person`
-* `concept`
 * `visit_occurrence`
 * `condition_occurrence`
 * `drug_exposure`
-* `observation`
 * `measurement`
-
-### Notes
-
-This is not yet a full official OMOP CDM implementation.
-Instead, it is a simplified schema sufficient for Sprint 1 goals:
-
-* local database setup,
-* structured healthcare data loading,
-* verification queries for T2D cohort support.
-
-The `concept` table was created successfully but has not yet been fully populated with official OMOP vocabulary content. Full vocabulary loading is deferred to later work beyond Sprint 1.
+* `observation`
+* `concept` *(created but not populated in Sprint 1)*
 
 ---
 
-## 6. Staging Tables and Data Loading
+# 🔄 ETL Pipeline
 
-To load Synthea CSV files safely, staging tables were created first:
+## 1. Staging Tables
+
+CSV files are first imported into staging tables:
 
 * `staging_patients`
 * `staging_encounters`
@@ -188,205 +74,217 @@ To load Synthea CSV files safely, staging tables were created first:
 * `staging_medications`
 * `staging_observations`
 
-CSV files were imported into these staging tables through pgAdmin.
+---
 
-### Data Mapping Workflow
+## 2. Mapping Tables
 
-The following mapping process was used:
+Synthea uses UUID identifiers, so mapping tables are required:
 
-* `patients.csv` → `staging_patients` → `person`
-* `encounters.csv` → `staging_encounters` → `visit_occurrence`
-* `conditions.csv` → `staging_conditions` → `condition_occurrence`
-* `medications.csv` → `staging_medications` → `drug_exposure`
-* `observations.csv` → `staging_observations` → `measurement` / `observation`
-
-### Mapping Support Tables
-
-Additional mapping tables used:
-
-* `patient_map`
-* `encounter_map`
-
-These mapping tables were needed because:
-
-* Synthea IDs are UUID-style string identifiers,
-* while the local OMOP-like schema uses numeric IDs for keys.
-
-### Observation and Measurement Mapping Logic
-
-Since `observations.csv` contains mixed-value data, the following simplified mapping was used:
-
-* rows with numeric `value` fields were inserted into `measurement`
-* rows with non-numeric `value` fields were inserted into `observation`
-
-This approach is sufficient for Sprint 1 verification and keeps the data usable for later cohort analysis work.
+* `patient_map` → maps Synthea patient UUID → `person_id`
+* `encounter_map` → maps encounter UUID → `visit_occurrence_id`
 
 ---
 
-## 7. T2D Verification and Mapping Logic
+## 3. Data Loading
 
-### Initial Problem
+### Mapping
 
-The first T2D verification query returned `0` rows because the initial mapping logic assumed ICD-10 codes such as `E11`.
+| CSV              | Target Table              |
+| ---------------- | ------------------------- |
+| patients.csv     | person                    |
+| encounters.csv   | visit_occurrence          |
+| conditions.csv   | condition_occurrence      |
+| medications.csv  | drug_exposure             |
+| observations.csv | measurement / observation |
 
-However, the Synthea `conditions.csv` file used **SNOMED-coded diagnoses**, for example:
+---
 
-* `44054006` → `Diabetes mellitus type 2 (disorder)`
+## Observation Handling Logic
 
-### Fix Applied
+The `observations.csv` file contains mixed data:
 
-The `condition_occurrence` loading logic was updated to map Type 2 Diabetes using the `description` field instead of relying on ICD-10-style codes.
+* numeric values → stored in `measurement`
+* non-numeric values → stored in `observation`
 
-Conditions matching descriptions such as:
+This allows support for:
 
-* `diabetes mellitus type 2`
-* `due to type 2 diabetes`
+* lab values (HbA1c)
+* clinical metrics (BMI)
 
-were mapped to:
+---
 
-```text
-condition_concept_id = 201826
-```
+# 🧪 Verification Results
 
-### Final T2D Verification Query
+## Core Table Counts
 
-```sql
+All core tables were successfully populated.
+
+Example:
+
+* `person`  11,540
+* `condition_occurrence` 427052
+* `drug_exposure` 606120
+* `measurement` 5734526
+* `observation` 3364109
+* `visit_occurrence` 702683
+* `concept`  0
+
+---
+
+# 🔍 T2D Verification (TC-11)
+
+## Query:
+
 SELECT COUNT(*)
 FROM condition_occurrence
 WHERE condition_concept_id = 201826;
-```
 
-### Final Result
 
-```text
-268
-```
+## Result
 
-This confirms that Type 2 Diabetes rows are present and queryable in the loaded data.
 
----
+2979
 
-## 8. Current Verification Summary
 
-### Final Core Table Counts
 
-| Table                | Row Count |
-| -------------------- | --------: |
-| person               |      1152 |
-| concept              |         0 |
-| visit_occurrence     |     67553 |
-| condition_occurrence |     42130 |
-| drug_exposure        |     56342 |
-| observation          |    327835 |
-| measurement          |    550931 |
 
-### Condition Concept Breakdown
+## Interpretation
 
-```sql
-SELECT condition_concept_id, COUNT(*)
-FROM condition_occurrence
-GROUP BY condition_concept_id;
-```
-
-### Current Result
-
-* `201826` → `268`
-* `0` → `41862`
-
-This is acceptable for Sprint 1 because the required T2D mapping works and returns a non-zero result.
+* T2D mapping is correct
+* Data scaled properly from previous smaller runs
+* ETL pipeline is functioning as expected
 
 ---
 
-## 9. Environment Details
+# 🧬 Disease Coverage
 
-| Item                    | Value                                    |
-| ----------------------- | ---------------------------------------- |
-| OS                      | Windows 11                               |
-| Java version            | OpenJDK 17.0.18                          |
-| Synthea version         | Latest clone from GitHub on Mar 31, 2026 |
-| PostgreSQL version      | 18.3                                     |
-| Database name           | omop_rwe                                 |
-| Patient count generated | 1000                                     |
-| Final T2D row count     | 268                                      |
+The dataset was verified to include:
 
----
+* Type 2 Diabetes ✔
+* Obesity ✔
+* Hypertension ✔
+* Chronic Kidney Disease (CKD) ✔
 
-## 10. Issues Encountered and Fixes
+All were found in `staging_conditions`.
 
-### 1. Java not recognized
+The generated dataset was verified to include all required disease groups for the project: Type 2 Diabetes, Obesity, Hypertension, and Chronic Kidney Disease.
 
-* **Issue:** `java` command was not found
-* **Fix:** Installed Temurin OpenJDK 17
-
-### 2. Synthea Gradle error
-
-* **Issue:** `Unsupported class file major version`
-* **Fix:** Corrected Java environment and reran after clearing Gradle state
-
-### 3. PostgreSQL CLI connection issues
-
-* **Issue:** `psql` connection failed on localhost
-* **Fix:** Switched to pgAdmin for successful database management
-
-### 4. Missing `conditions.csv` in first Synthea run
-
-* **Issue:** Initial diabetes-module-only run did not produce all needed CSV files
-* **Fix:** Reran Synthea without `-m diabetes` using full CSV export
-
-### 5. T2D mapping returned zero initially
-
-* **Issue:** Initial mapping assumed ICD-10-like `E11` codes
-* **Fix:** Updated mapping logic to use SNOMED-based descriptions from `conditions.csv`
-
-### 6. Observation and measurement tables were initially empty
-
-* **Issue:** `observation` and `measurement` had zero rows because `observations.csv` had not yet been imported into a staging table
-* **Fix:** Created `staging_observations`, imported `observations.csv`, then mapped numeric values into `measurement` and non-numeric values into `observation`
-
-### 7. Mapping column name mismatch during observation loading
-
-* **Issue:** Initial insert query used a non-existent column name `patient_uuid`
-* **Fix:** Corrected the join to use the actual mapping column `synthea_patient_id`
+![alt text](image.png)
+![alt text](image-1.png)
+![alt text](image-2.png)
 
 ---
 
-## 11. Current Sprint 1 Status
+# 📊 BMI Analysis
 
-Completed:
+Query results showed:
 
-* branch creation
-* Synthea setup
-* Java setup
-* PostgreSQL setup
-* database creation
-* OMOP-like schema creation
+* description: `Body mass index (BMI) [Ratio]`
+* numeric values
+* units: `kg/m2`
+
+## Conclusion
+
+BMI is stored in the **`measurement` table**.
+
+---
+
+# 🧪 HbA1c Analysis
+
+Query results showed:
+
+* description: `Hemoglobin A1c/Hemoglobin.total in Blood`
+* numeric values
+* units: `%`
+
+## Conclusion
+
+HbA1c is stored in the **`measurement` table**.
+
+---
+
+# ⏱️ Temporal Validation
+
+Comparison of HbA1c dates and T2D condition start dates showed:
+
+* HbA1c measurements occur after T2D diagnosis in sampled data
+* ordering is clinically reasonable
+
+## Conclusion
+
+The dataset is **temporally valid** for analysis.
+![alt text](image-3.png)
+![alt text](image-4.png)
+
+---
+
+# 🧠 Concept Table
+
+* `concept` table exists but is empty
+* concept IDs are assigned manually (e.g., T2D = 201826)
+
+## Note
+
+Full OMOP vocabulary loading is **out of scope for Sprint 1**.
+
+---
+
+# 🧾 Verification Script
+
+All checks are consolidated in:
+
+`verify_omop.sql`
+
+This script verifies:
+
+* database connection
 * staging imports
-* mapping table creation
-* core table loading
-* observation and measurement loading
-* Type 2 Diabetes verification query
-* verification SQL script preparation
-
-Current status:
-
-* PostgreSQL running
-* schema created
-* data loaded
-* verification queries working
-* T2D query working
-* Sprint 1 database deliverable complete
+* mapping tables
+* core table counts
+* T2D presence (TC-11)
+* disease coverage
+* BMI and HbA1c inspection
+* temporal validation
 
 ---
 
-## 12. Next Steps
+# ✅ Sprint 1 Completion Status
 
-Next database tasks include:
+| Requirement                      | Status |
+| -------------------------------- | ------ |
+| 10,000 patients generated        | ✅      |
+| PostgreSQL setup                 | ✅      |
+| ETL pipeline working             | ✅      |
+| OMOP-like schema populated       | ✅      |
+| measurement & observation loaded | ✅      |
+| T2D verification (TC-11)         | ✅      |
+| Disease coverage verified        | ✅      |
+| BMI analysis                     | ✅      |
+| HbA1c analysis                   | ✅      |
+| Temporal validation              | ✅      |
 
-* clean and organize SQL scripts for repository submission,
-* refine SQL templates for cohort characterization,
-* prepare parameterized SQL query templates for Sprint 2,
-* improve concept vocabulary handling if needed later,
-* support backend integration with reusable query outputs.
+---
 
-```
+# 🚀 Conclusion
+
+Sprint 1 is **fully complete**.
+
+The database now:
+
+* supports cohort analysis
+* contains clinically meaningful data
+* scales to required size
+* is ready for Sprint 2 SQL development
+
+---
+
+# 🔜 Next Steps (Sprint 2)
+
+* cohort SQL templates
+* measurement aggregation (HbA1c, BMI, BP)
+* incidence queries
+* backend QueryEngine integration
+
+
+
 
