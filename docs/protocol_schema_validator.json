@@ -1,0 +1,1208 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Rahulm0106/rwe-gen/blob/main/docs/protocol_schema_validator.json",
+  "title": "RWE-Gen Study Protocol Validator",
+  "description": "Validation schema for the deterministic study protocol generated from a clinician question in the RWE-Gen MVP.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "protocol_status",
+    "original_question",
+    "normalized_question",
+    "study_type",
+    "target_cohort",
+    "comparator",
+    "outcome",
+    "time_windows",
+    "requested_outputs",
+    "concept_sets",
+    "assumptions",
+    "issues",
+    "execution"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$"
+    },
+    "protocol_status": {
+      "type": "string",
+      "enum": [
+        "draft",
+        "needs_review",
+        "needs_mapping",
+        "executable",
+        "blocked",
+        "unsupported"
+      ]
+    },
+    "original_question": {
+      "type": "string",
+      "minLength": 1
+    },
+    "normalized_question": {
+      "type": "string",
+      "minLength": 1
+    },
+    "study_type": {
+      "type": "string",
+      "enum": [
+        "cohort_characterization",
+        "incidence_analysis"
+      ]
+    },
+    "target_cohort": {
+      "$ref": "#/$defs/cohortDefinition"
+    },
+    "comparator": {
+      "$ref": "#/$defs/comparator"
+    },
+    "outcome": {
+      "$ref": "#/$defs/outcome"
+    },
+    "time_windows": {
+      "$ref": "#/$defs/timeWindows"
+    },
+    "requested_outputs": {
+      "$ref": "#/$defs/requestedOutputs"
+    },
+    "concept_sets": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/conceptSet"
+      },
+      "uniqueItems": true
+    },
+    "assumptions": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "issues": {
+      "$ref": "#/$defs/issues"
+    },
+    "execution": {
+      "$ref": "#/$defs/execution"
+    }
+  },
+  "$defs": {
+    "nullableDate": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+    },
+    "conceptRef": {
+      "type": "string",
+      "minLength": 1
+    },
+    "indexEvent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "event_type",
+        "concept_refs",
+        "occurrence",
+        "index_date_rule"
+      ],
+      "properties": {
+        "event_type": {
+          "type": "string",
+          "enum": [
+            "condition",
+            "drug_exposure",
+            "procedure",
+            "measurement",
+            "observation",
+            "visit"
+          ]
+        },
+        "concept_refs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/conceptRef"
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "occurrence": {
+          "type": "string",
+          "enum": [
+            "first",
+            "any"
+          ]
+        },
+        "index_date_rule": {
+          "type": "string",
+          "enum": [
+            "first_qualifying_event",
+            "earliest_in_window",
+            "latest_in_window"
+          ]
+        }
+      }
+    },
+    "timing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "relation_to_index",
+        "start_day_offset",
+        "end_day_offset"
+      ],
+      "properties": {
+        "relation_to_index": {
+          "type": "string",
+          "enum": [
+            "before",
+            "after",
+            "on_or_before",
+            "on_or_after",
+            "during"
+          ]
+        },
+        "start_day_offset": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "end_day_offset": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      }
+    },
+    "criterion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "criterion_id",
+        "domain",
+        "concept_refs",
+        "rule_type",
+        "operator",
+        "value",
+        "unit",
+        "min_occurrences",
+        "timing"
+      ],
+      "properties": {
+        "criterion_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "domain": {
+          "type": "string",
+          "enum": [
+            "condition",
+            "drug_exposure",
+            "procedure",
+            "measurement",
+            "observation",
+            "visit",
+            "demographic"
+          ]
+        },
+        "concept_refs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/conceptRef"
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "rule_type": {
+          "type": "string",
+          "enum": [
+            "has",
+            "not_has",
+            "value_compare"
+          ]
+        },
+        "operator": {
+          "type": "string",
+          "enum": [
+            "exists",
+            "eq",
+            "neq",
+            "gt",
+            "gte",
+            "lt",
+            "lte",
+            "between"
+          ]
+        },
+        "value": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 2,
+              "maxItems": 2
+            }
+          ]
+        },
+        "unit": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "min_occurrences": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1
+        },
+        "timing": {
+          "$ref": "#/$defs/timing"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "rule_type": {
+                "const": "value_compare"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "operator": {
+                "enum": [
+                  "eq",
+                  "neq",
+                  "gt",
+                  "gte",
+                  "lt",
+                  "lte",
+                  "between"
+                ]
+              }
+            },
+            "required": [
+              "value"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "rule_type": {
+                "enum": [
+                  "has",
+                  "not_has"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "operator": {
+                "const": "exists"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "operator": {
+                "const": "between"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "value": {
+                "type": "array",
+                "items": {
+                  "type": "number"
+                },
+                "minItems": 2,
+                "maxItems": 2
+              }
+            }
+          }
+        }
+      ]
+    },
+    "ageFilter": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "min",
+        "max",
+        "unit",
+        "evaluated_at"
+      ],
+      "properties": {
+        "min": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "max": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "unit": {
+          "type": "string",
+          "const": "years"
+        },
+        "evaluated_at": {
+          "type": "string",
+          "const": "index_date"
+        }
+      }
+    },
+    "demographicFilters": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "age",
+        "sex"
+      ],
+      "properties": {
+        "age": {
+          "$ref": "#/$defs/ageFilter"
+        },
+        "sex": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "male",
+              "female",
+              "unknown"
+            ]
+          },
+          "uniqueItems": true
+        }
+      }
+    },
+    "cohortDefinition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "label",
+        "index_event",
+        "inclusion_criteria",
+        "exclusion_criteria",
+        "demographic_filters"
+      ],
+      "properties": {
+        "label": {
+          "type": "string",
+          "minLength": 1
+        },
+        "index_event": {
+          "$ref": "#/$defs/indexEvent"
+        },
+        "inclusion_criteria": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/criterion"
+          }
+        },
+        "exclusion_criteria": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/criterion"
+          }
+        },
+        "demographic_filters": {
+          "$ref": "#/$defs/demographicFilters"
+        }
+      }
+    },
+    "comparatorDefinition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "index_event",
+        "inclusion_criteria",
+        "exclusion_criteria",
+        "demographic_filters"
+      ],
+      "properties": {
+        "index_event": {
+          "$ref": "#/$defs/indexEvent"
+        },
+        "inclusion_criteria": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/criterion"
+          }
+        },
+        "exclusion_criteria": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/criterion"
+          }
+        },
+        "demographic_filters": {
+          "$ref": "#/$defs/demographicFilters"
+        }
+      }
+    },
+    "comparator": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "enabled",
+        "label",
+        "definition",
+        "comparison_mode"
+      ],
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "label": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "definition": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/comparatorDefinition"
+            }
+          ]
+        },
+        "comparison_mode": {
+          "type": "string",
+          "enum": [
+            "none",
+            "parallel_cohort"
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "enabled": {
+                "const": false
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "label": {
+                "type": "null"
+              },
+              "definition": {
+                "type": "null"
+              },
+              "comparison_mode": {
+                "const": "none"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "enabled": {
+                "const": true
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "label": {
+                "type": "string",
+                "minLength": 1
+              },
+              "definition": {
+                "$ref": "#/$defs/comparatorDefinition"
+              },
+              "comparison_mode": {
+                "const": "parallel_cohort"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "outcome": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "required",
+        "label",
+        "concept_refs",
+        "occurrence",
+        "incident_only",
+        "clean_period_days"
+      ],
+      "properties": {
+        "required": {
+          "type": "boolean"
+        },
+        "label": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "concept_refs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/conceptRef"
+          },
+          "uniqueItems": true
+        },
+        "occurrence": {
+          "type": "string",
+          "enum": [
+            "first",
+            "any"
+          ]
+        },
+        "incident_only": {
+          "type": "boolean"
+        },
+        "clean_period_days": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "required": {
+                "const": false
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "label": {
+                "type": "null"
+              },
+              "concept_refs": {
+                "maxItems": 0
+              },
+              "clean_period_days": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "required": {
+                "const": true
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "label": {
+                "type": "string",
+                "minLength": 1
+              },
+              "concept_refs": {
+                "minItems": 1
+              }
+            }
+          }
+        }
+      ]
+    },
+    "calendarWindow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "start_date",
+        "end_date"
+      ],
+      "properties": {
+        "start_date": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+            }
+          ]
+        },
+        "end_date": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+            }
+          ]
+        }
+      }
+    },
+    "priorObservation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "min_prior_observation_days"
+      ],
+      "properties": {
+        "min_prior_observation_days": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        }
+      }
+    },
+    "washout": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "washout_period_days"
+      ],
+      "properties": {
+        "washout_period_days": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        }
+      }
+    },
+    "timeAtRisk": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "start_anchor",
+        "start_day_offset",
+        "end_anchor",
+        "end_day_offset",
+        "max_followup_days",
+        "censor_on_outcome"
+      ],
+      "properties": {
+        "start_anchor": {
+          "type": "string",
+          "enum": [
+            "index_date",
+            "cohort_entry"
+          ]
+        },
+        "start_day_offset": {
+          "type": "integer"
+        },
+        "end_anchor": {
+          "type": "string",
+          "enum": [
+            "index_date",
+            "outcome_date",
+            "end_of_observation",
+            "study_end",
+            "death"
+          ]
+        },
+        "end_day_offset": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "max_followup_days": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "censor_on_outcome": {
+          "type": "boolean"
+        }
+      }
+    },
+    "timeWindows": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "calendar_window",
+        "prior_observation",
+        "washout",
+        "time_at_risk"
+      ],
+      "properties": {
+        "calendar_window": {
+          "$ref": "#/$defs/calendarWindow"
+        },
+        "prior_observation": {
+          "$ref": "#/$defs/priorObservation"
+        },
+        "washout": {
+          "$ref": "#/$defs/washout"
+        },
+        "time_at_risk": {
+          "$ref": "#/$defs/timeAtRisk"
+        }
+      }
+    },
+    "requestedOutputs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "measures",
+        "stratify_by"
+      ],
+      "properties": {
+        "measures": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "cohort_size",
+              "demographics",
+              "incidence_rate",
+              "event_count",
+              "person_time"
+            ]
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "stratify_by": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "sex",
+              "age_group"
+            ]
+          },
+          "uniqueItems": true
+        }
+      }
+    },
+    "candidateConcept": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "omop_concept_id",
+        "concept_name",
+        "vocabulary_id"
+      ],
+      "properties": {
+        "omop_concept_id": {
+          "type": "integer"
+        },
+        "concept_name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "vocabulary_id": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "mapping": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "omop_concept_id",
+        "omop_concept_name",
+        "candidate_concepts"
+      ],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "unmapped",
+            "mapped",
+            "ambiguous",
+            "not_required"
+          ]
+        },
+        "omop_concept_id": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "omop_concept_name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "candidate_concepts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/candidateConcept"
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "mapped"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "omop_concept_id": {
+                "type": "integer"
+              },
+              "omop_concept_name": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "ambiguous"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "candidate_concepts": {
+                "minItems": 1
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "enum": [
+                  "unmapped",
+                  "not_required"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "omop_concept_id": {
+                "type": "null"
+              },
+              "omop_concept_name": {
+                "type": "null"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "conceptSet": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "concept_ref",
+        "raw_text",
+        "domain",
+        "standard_vocab_preference",
+        "mapping"
+      ],
+      "properties": {
+        "concept_ref": {
+          "$ref": "#/$defs/conceptRef"
+        },
+        "raw_text": {
+          "type": "string",
+          "minLength": 1
+        },
+        "domain": {
+          "type": "string",
+          "enum": [
+            "condition",
+            "drug",
+            "procedure",
+            "measurement",
+            "observation",
+            "visit"
+          ]
+        },
+        "standard_vocab_preference": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "SNOMED",
+            "RxNorm",
+            "LOINC",
+            null
+          ]
+        },
+        "mapping": {
+          "$ref": "#/$defs/mapping"
+        }
+      }
+    },
+    "issueItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "code",
+        "message",
+        "field_path"
+      ],
+      "properties": {
+        "code": {
+          "type": "string",
+          "minLength": 1
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1
+        },
+        "field_path": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "issues": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "warnings",
+        "blocking_errors"
+      ],
+      "properties": {
+        "warnings": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/issueItem"
+          }
+        },
+        "blocking_errors": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/issueItem"
+          }
+        }
+      }
+    },
+    "execution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "human_review_required",
+        "human_mapping_confirmation_required",
+        "sql_template",
+        "ready_for_execution"
+      ],
+      "properties": {
+        "human_review_required": {
+          "type": "boolean"
+        },
+        "human_mapping_confirmation_required": {
+          "type": "boolean"
+        },
+        "sql_template": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "cohort_characterization",
+            "incidence_analysis",
+            null
+          ]
+        },
+        "ready_for_execution": {
+          "type": "boolean"
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "study_type": {
+            "const": "cohort_characterization"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "outcome": {
+            "properties": {
+              "required": {
+                "const": false
+              }
+            }
+          },
+          "requested_outputs": {
+            "properties": {
+              "measures": {
+                "contains": {
+                  "enum": [
+                    "cohort_size",
+                    "demographics"
+                  ]
+                }
+              }
+            }
+          },
+          "execution": {
+            "properties": {
+              "sql_template": {
+                "enum": [
+                  "cohort_characterization",
+                  null
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "study_type": {
+            "const": "incidence_analysis"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "outcome": {
+            "properties": {
+              "required": {
+                "const": true
+              }
+            }
+          },
+          "requested_outputs": {
+            "properties": {
+              "measures": {
+                "contains": {
+                  "const": "incidence_rate"
+                }
+              }
+            }
+          },
+          "execution": {
+            "properties": {
+              "sql_template": {
+                "enum": [
+                  "incidence_analysis",
+                  null
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "protocol_status": {
+            "const": "executable"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "execution": {
+            "properties": {
+              "ready_for_execution": {
+                "const": true
+              },
+              "sql_template": {
+                "type": "string",
+                "enum": [
+                  "cohort_characterization",
+                  "incidence_analysis"
+                ]
+              }
+            }
+          },
+          "issues": {
+            "properties": {
+              "blocking_errors": {
+                "maxItems": 0
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "protocol_status": {
+            "enum": [
+              "blocked",
+              "unsupported"
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "execution": {
+            "properties": {
+              "ready_for_execution": {
+                "const": false
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}
