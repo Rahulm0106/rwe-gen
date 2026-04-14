@@ -1,0 +1,98 @@
+{
+  "schema_version": "1.0.0",
+  "protocol_status": "draft",
+  "original_question": "Among adults with type 2 diabetes, what is the cohort size and demographic profile?",
+  "normalized_question": "Cohort characterization of adults with type 2 diabetes.",
+  "study_type": "cohort_characterization",
+  "target_cohort": {
+    "label": "Adults with Type 2 Diabetes",
+    "index_event": {
+      "event_type": "condition",
+      "concept_refs": [
+        "t2d_condition"
+      ],
+      "occurrence": "first",
+      "index_date_rule": "first_qualifying_event"
+    },
+    "inclusion_criteria": [],
+    "exclusion_criteria": [],
+    "demographic_filters": {
+      "age": {
+        "min": 18,
+        "max": null,
+        "unit": "years",
+        "evaluated_at": "index_date"
+      },
+      "sex": []
+    }
+  },
+  "comparator": {
+    "enabled": false,
+    "label": null,
+    "definition": null,
+    "comparison_mode": "none"
+  },
+  "outcome": {
+    "required": false,
+    "label": null,
+    "concept_refs": [],
+    "occurrence": "first",
+    "incident_only": false,
+    "clean_period_days": null
+  },
+  "time_windows": {
+    "calendar_window": {
+      "start_date": null,
+      "end_date": null
+    },
+    "prior_observation": {
+      "min_prior_observation_days": 365
+    },
+    "washout": {
+      "washout_period_days": null
+    },
+    "time_at_risk": {
+      "start_anchor": "index_date",
+      "start_day_offset": 0,
+      "end_anchor": "end_of_observation",
+      "end_day_offset": null,
+      "max_followup_days": null,
+      "censor_on_outcome": false
+    }
+  },
+  "requested_outputs": {
+    "measures": [
+      "cohort_size",
+      "demographics"
+    ],
+    "stratify_by": [
+      "sex",
+      "age_group"
+    ]
+  },
+  "concept_sets": [
+    {
+      "concept_ref": "t2d_condition",
+      "raw_text": "type 2 diabetes",
+      "domain": "condition",
+      "standard_vocab_preference": "SNOMED",
+      "mapping": {
+        "status": "mapped",
+        "omop_concept_id": 201826,
+        "omop_concept_name": "Type 2 diabetes mellitus",
+        "candidate_concepts": []
+      }
+    }
+  ],
+  "assumptions": [],
+  "issues": {
+    "warnings": [],
+    "blocking_errors": []
+  },
+  "execution": {
+    "human_review_required": true,
+    "human_mapping_confirmation_required": true,
+    "sql_template": "cohort_characterization",
+    "ready_for_execution": false
+  }
+}
