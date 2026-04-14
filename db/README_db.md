@@ -64,6 +64,7 @@ Wait for the container to be healthy, then create the database:
 docker exec -it rwegen_db psql -U postgres -c "CREATE DATABASE rwegen;"
 ```
 
+
 ---
 
 ## Step 3 — Copy CSVs into the container (Laya or Prasanna)
