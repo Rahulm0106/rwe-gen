@@ -651,12 +651,3 @@ SELECT gate, status FROM (
 
 ) summary
 ORDER BY sort_order;
-
--- ============================================================
--- END OF SCRIPT
--- If all rows in Section 11 show PASS (or MANUAL):
---   Sprint 1 is done. Sprint 2 can begin April 16.
--- If any row shows FAIL:
---   Share the specific FAIL message with Laya immediately.
---   She needs to fix the ETL and re-run before April 15.
--- ============================================================
