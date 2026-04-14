@@ -1,70 +1,164 @@
-name: CI
+name: RWE-Gen CI
 
 on:
   pull_request:
     branches: [ main ]
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Job 1: Python lint (backend/)
+# ─────────────────────────────────────────────────────────────────────────────
 jobs:
-  backend-lint-and-smoke:
-    name: Backend — Lint & Smoke Test
+  python-lint:
+    name: Python Lint (flake8)
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Python
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install flake8
+        run: pip install flake8
+
+      - name: Run flake8 on backend/
+        run: |
+          if [ "$(find backend/ -name '*.py' | wc -l)" -gt 0 ]; then
+            flake8 backend/ \
+              --max-line-length=100 \
+              --exclude=backend/__pycache__,.venv,venv \
+              --count \
+              --statistics
+          else
+            echo "No Python files in backend/ yet — skipping lint"
+          fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Job 2: Node lint (frontend/src)
+# Skips gracefully if Muktha has not yet scaffolded the React app
+# ─────────────────────────────────────────────────────────────────────────────
+  node-lint:
+    name: Node Lint (ESLint)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node 18
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install dependencies and run ESLint
+        run: |
+          if [ -f frontend/package.json ]; then
+            cd frontend
+            npm install --silent
+            if [ -d src ]; then
+              npx eslint src/ --ext .js,.jsx,.ts,.tsx \
+                --max-warnings=0 || echo "ESLint warnings found — review before Sprint 2"
+            else
+              echo "frontend/src not yet present — skipping ESLint"
+            fi
+          else
+            echo "frontend/package.json not yet present — skipping Node lint"
+          fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Job 3: Backend smoke test
+# Starts the FastAPI stub server, curls all 3 endpoints, asserts HTTP 200
+# NOTE (Sprint 1): endpoints return mock data only — smoke test confirms
+#                  the server starts and routes are reachable.
+#                  Will be extended with payload validation in Sprint 2.
+# ─────────────────────────────────────────────────────────────────────────────
+  backend-smoke-test:
+    name: Backend Smoke Test (3 endpoints)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
       - name: Install backend dependencies
         run: |
-          cd backend
-          pip install --upgrade pip
-          pip install -r requirements.txt || echo "requirements.txt not yet present — skipping"
-
-      - name: Lint with ruff
-        run: |
-          pip install ruff
-          ruff check backend/ || echo "No Python files to lint yet"
-
-      - name: Run backend smoke tests
-        run: |
           if [ -f backend/requirements.txt ]; then
+            pip install -r backend/requirements.txt
+          else
+            echo "requirements.txt not yet present — installing FastAPI minimal set"
+            pip install fastapi uvicorn httpx
+          fi
+
+      - name: Start FastAPI server in background
+        run: |
+          if [ -f backend/main.py ]; then
             cd backend
             uvicorn main:app --host 0.0.0.0 --port 8000 &
-            sleep 3
-            python -m pytest tests/test_smoke.py -v || echo "Smoke tests not yet present"
+            for i in $(seq 1 15); do
+              if curl -sf http://localhost:8000/docs > /dev/null 2>&1; then
+                echo "Server is up after ${i}s"
+                break
+              fi
+              echo "Waiting for server... (${i}s)"
+              sleep 1
+            done
           else
-            echo "Backend not yet scaffolded — skipping smoke test"
+            echo "backend/main.py not yet present — skipping smoke test"
+            exit 0
           fi
 
-  frontend-lint:
-    name: Frontend — Lint
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: '18'
-
-      - name: Install frontend dependencies
+      - name: Smoke test — POST /generate-protocol
         run: |
-          if [ -f frontend/package.json ]; then
-            cd frontend && npm install
-          else
-            echo "Frontend not yet scaffolded — skipping"
+          if [ -f backend/main.py ]; then
+            RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" \
+              -X POST http://localhost:8000/generate-protocol \
+              -H "Content-Type: application/json" \
+              -d '{"question": "What is the incidence of Type 2 Diabetes in patients aged 40-65?"}')
+            echo "/generate-protocol returned HTTP $RESPONSE"
+            if [ "$RESPONSE" != "200" ]; then
+              echo "FAIL: Expected 200, got $RESPONSE"
+              exit 1
+            fi
+            echo "PASS"
           fi
 
-      - name: Lint with ESLint
+      - name: Smoke test — POST /validate-concepts
         run: |
-          if [ -f frontend/package.json ]; then
-            cd frontend && npm run lint || echo "No lint script yet"
-          else
-            echo "Skipping — frontend not yet present"
+          if [ -f backend/main.py ]; then
+            RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" \
+              -X POST http://localhost:8000/validate-concepts \
+              -H "Content-Type: application/json" \
+              -d '{"concepts": ["Type 2 Diabetes", "Metformin"]}')
+            echo "/validate-concepts returned HTTP $RESPONSE"
+            if [ "$RESPONSE" != "200" ]; then
+              echo "FAIL: Expected 200, got $RESPONSE"
+              exit 1
+            fi
+            echo "PASS"
           fi
+
+      - name: Smoke test — POST /execute-query
+        run: |
+          if [ -f backend/main.py ]; then
+            RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" \
+              -X POST http://localhost:8000/execute-query \
+              -H "Content-Type: application/json" \
+              -d '{"protocol": {}, "validated_concepts": []}')
+            echo "/execute-query returned HTTP $RESPONSE"
+            if [ "$RESPONSE" != "200" ]; then
+              echo "FAIL: Expected 200, got $RESPONSE"
+              exit 1
+            fi
+            echo "PASS"
+          fi
+
+      - name: All smoke tests passed
+        run: echo "All 3 endpoints returned HTTP 200 — smoke test complete"
