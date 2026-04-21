@@ -1,4 +1,3 @@
-
 **Owner:** Laya Fakher (DB/Synthea)  
 **Consumer:** Prasanna Pravin Renapurkar (Backend)  
 **Verified by:** Rahul Sanjay Mandviya (QA)
@@ -7,11 +6,83 @@
 
 ## What this folder contains
 
-| File | Purpose |
-|------|---------|
-| `rwegen_etl_setup.sql` | Full ETL — creates all OMOP tables and loads Synthea data. Run once. |
-| `sprint1_verification.sql` | QA verification script — Rahul runs this to sign off Sprint 1. |
-| `synthea/` | Drop your Synthea CSV output here before running the ETL. Not committed to git. |
+| File | Purpose | Sprint |
+|------|---------|--------|
+| `rwegen_etl_setup.sql` | Full ETL — creates all OMOP tables and loads Synthea data. Run once. | Sprint 1 |
+| `sprint1_verification.sql` | QA verification script — Rahul runs this to sign off Sprint 1. | Sprint 1 |
+| `sprint2_sql_templates.sql` | 4 parameterized SQL templates for Prasanna's `/execute-query` endpoint. | Sprint 2 |
+| `synthea/` | Drop your Synthea CSV output here before running the ETL. Not committed to git. | — |
+
+---
+
+## Sprint 2 SQL Templates
+
+File: `sprint2_sql_templates.sql`
+
+These 4 templates are consumed by Prasanna's `/execute-query` FastAPI endpoint.
+Prasanna replaces `{placeholders}` with validated concept IDs from Simon's ATHENA module.
+
+| Template | Study Type | Parameters | Validated Result |
+|----------|-----------|------------|-----------------|
+| Template 1 — Demographics | Characterization | `{condition_concept_id}`, `{drug_concept_id}` | cohort_size=1662, mean_age=81.4 |
+| Template 2 — Lab Aggregation | Lab Value Summary | `{condition_concept_id}`, `{measurement_concept_id}` | HbA1c: 154k readings, mean=3.77 |
+| Template 3 — Incidence Rate | Incidence | `{condition_concept_id}`, `{obs_start_date}`, `{obs_end_date}` | 4.6006 per 1,000 person-years |
+| Template 4 — Dialysis / CKD | Procedure Outcome | none (hardcoded CKD concept) | ckd_cohort=1137, dialysis=0 (TC-08 ✓) |
+
+### Key concept IDs for Prasanna (parameter reference)
+
+#### Conditions (`condition_concept_id`)
+| Disease | concept_id |
+|---------|-----------|
+| Type 2 Diabetes | 201826 |
+| Obesity | 433736 |
+| Hypertension | 316866 |
+| Chronic Kidney Disease | 46271022 |
+
+#### Labs (`measurement_concept_id`)
+| Lab | concept_id |
+|-----|-----------|
+| HbA1c | 3004410 |
+| BMI | 3038553 |
+| Systolic BP | 3004249 |
+| Diastolic BP | 3012888 |
+| eGFR | 3049187 |
+| Serum Creatinine | 3016723 |
+| LDL Cholesterol | 3007070 |
+
+#### Drugs (`drug_concept_id`)
+| Drug | concept_id |
+|------|-----------|
+| Metformin | 1503297 |
+| Lisinopril | 1308216 |
+| Amlodipine | 1332418 |
+| Atorvastatin | 1545958 |
+| Insulin | 1516766 |
+
+### PostgreSQL compatibility notes (important for Prasanna)
+
+Two fixes were required for PostgreSQL 18 — do not revert these:
+
+1. `AVG(DATE_PART(...))` requires `::numeric` cast before `ROUND()`:
+   ```sql
+   ROUND(AVG(DATE_PART('year', AGE(p.birth_datetime)))::numeric, 1)
+   ```
+
+2. Date subtraction for person-years uses `(date - date)::numeric / 365.25`
+   instead of `EXTRACT(EPOCH FROM interval)` which fails in PostgreSQL 18:
+   ```sql
+   SUM((cohort.window_end - cohort.window_start)::numeric / 365.25)
+   ```
+
+### Sprint 2 test case results
+
+| Test Case | Description | Status |
+|-----------|-------------|--------|
+| TC-01 | Demographics cohort non-zero | ✅ PASS |
+| TC-02 | HbA1c readings non-zero | ✅ PASS |
+| TC-03 | Incidence query can run | ✅ PASS |
+| TC-08 | Empty cohort returns 0 cleanly, not null | ✅ PASS |
+| TC-04 | GROQ retry logic — Simon's responsibility | — |
 
 ---
 
@@ -63,7 +134,6 @@ Wait for the container to be healthy, then create the database:
 ```bash
 docker exec -it rwegen_db psql -U postgres -c "CREATE DATABASE rwegen;"
 ```
-
 
 ---
 
@@ -155,38 +225,6 @@ postgresql://postgres:<password>@db:5432/rwegen
 
 ---
 
-## Key concept IDs (for Prasanna SQL template reference)
-
-### Conditions
-| Disease | concept_id |
-|---------|-----------|
-| Type 2 Diabetes | 201826 |
-| Obesity | 433736 |
-| Hypertension | 316866 |
-| Chronic Kidney Disease | 46271022 |
-
-### Labs (measurement_concept_id)
-| Lab | concept_id |
-|-----|-----------|
-| HbA1c | 3004410 |
-| BMI | 3038553 |
-| Systolic BP | 3004249 |
-| Diastolic BP | 3012888 |
-| eGFR | 3049187 |
-| Serum Creatinine | 3016723 |
-| LDL Cholesterol | 3007070 |
-
-### Drugs (drug_concept_id)
-| Drug | concept_id |
-|------|-----------|
-| Metformin | 1503297 |
-| Lisinopril | 1308216 |
-| Amlodipine | 1332418 |
-| Atorvastatin | 1545958 |
-| Insulin | 1516766 |
-
----
-
 ## Re-running the ETL
 
 The ETL script is fully idempotent — it drops and recreates everything.  
@@ -197,11 +235,3 @@ docker exec -it rwegen_db psql -U postgres -d rwegen -f /tmp/rwegen_etl_setup.sq
 ```
 
 ---
-
-## Questions
-
-- ETL / data issues → Laya Fakher  
-- Docker / connection issues → Prasanna Pravin Renapurkar  
-- Verification / test failures → Rahul Sanjay Mandviya
-
-    
