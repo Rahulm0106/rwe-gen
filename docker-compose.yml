@@ -1,0 +1,92 @@
+version: "3.9"
+
+services:
+
+  db:
+    image: postgres:15.6-alpine
+    container_name: rwe_gen_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: omop_rwe
+      POSTGRES_USER: rwe_user
+      POSTGRES_PASSWORD: rwe_dev_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - db_data:/var/lib/postgresql/data
+      - ./db/sql:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rwe_user -d omop_rwe"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: rwe_gen_backend
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      # ── Venice LLM ────────────────────────────────────────────────────────
+      VENICE_API_KEY: ${VENICE_API_KEY:-not_configured}
+      VENICE_BASE_URL: ${VENICE_BASE_URL:-https://api.venice.ai/api/v1}
+      VENICE_TIMEOUT_SECONDS: ${VENICE_TIMEOUT_SECONDS:-60}
+
+      # ── LOF / IMO Normalize ───────────────────────────────────────────────
+      LOF_CLIENT_ID: ${LOF_CLIENT_ID:-}
+      LOF_CLIENT_SECRET: ${LOF_CLIENT_SECRET:-}
+      LOF_BASE_URL: ${LOF_BASE_URL:-https://api.leapoffaith.com/api/service}
+      CONCEPT_MAPPING_SOURCE: ${CONCEPT_MAPPING_SOURCE:-auto}
+
+      # ── Local vocab paths (inside container) ─────────────────────────────
+      # These point to /app/vocab/ which is mounted from host below.
+      ATHENA_CONCEPT_CSV_PATH: /app/vocab/CONCEPT.csv
+      ATHENA_CONCEPT_RELATIONSHIP_CSV_PATH: /app/vocab/CONCEPT_RELATIONSHIP.csv
+      # ATHENA_CONCEPT_SYNONYM_CSV_PATH: /app/vocab/CONCEPT_SYNONYM.csv
+
+      # ── Schema path (inside container) ───────────────────────────────────
+      SCHEMA_PATH: /app/protocol_schema_validator.json
+
+      # ── Database ──────────────────────────────────────────────────────────
+      DATABASE_URL: postgresql://rwe_user:rwe_dev_password@db:5432/omop_rwe
+
+      PYTHONUNBUFFERED: "1"
+
+    volumes:
+      - ./backend:/app
+      # VOCAB MOUNT: maps host ATHENA vocab directory to /app/vocab/ in container.
+      # Change the left side to wherever your CONCEPT.csv files live on the host.
+      # Example: if your files are at ~/athena_vocab/, use: ~/athena_vocab:/app/vocab:ro
+      - ${ATHENA_VOCAB_HOST_PATH:-./vocab}:/app/vocab:ro
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: rwe_gen_frontend
+    restart: unless-stopped
+    ports:
+      - "5173:5173"
+    environment:
+      VITE_API_URL: http://localhost:8000
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    depends_on:
+      - backend
+
+volumes:
+  db_data:
