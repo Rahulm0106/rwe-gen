@@ -1,57 +1,81 @@
 # Integration Contract
 
-**Owner:** Rahul  
-**Status:** 🚧 Draft — to be completed Day 2, Sprint 1  
+**Owner:** Rahul (QA / Integration Lead)
+
+**Status:** 🚧 Placeholder — JSON shapes to be filled on Day 2 once Prasanna's Pydantic models are reviewed
+
 **Last updated:** March 29, 2026
 
-> This document is the **source of truth** for all inter-component JSON shapes.
-> Any change to a request or response format must be reflected here first,
-> and the affected downstream member notified before the code change is merged.
+---
+
+## What this document is
+
+This is the **single source of truth** for how every component in RWE-Gen talks to every other component.
+
+It defines exactly:
+- What JSON the **frontend sends** to each endpoint
+- What JSON the **backend returns** on success
+- What JSON the **backend returns** on failure
+
+### The golden rule
+> If Muktha's frontend code and Prasanna's backend code disagree on a field name, type, or structure — **this document is the referee, not either person's code.**
+> Any change to an endpoint shape must be a PR to this document first. The affected member must be notified and approve before the code changes.
+
+---
+
+## Change Log
+
+| Date | Changed by | What changed |
+|------|------------|--------------|
+| Mar 29, 2026 | Rahul | Initial placeholder created — structure and rules defined |
+| _Day 2_ | Rahul + Prasanna | JSON shapes filled in from Pydantic models |
 
 ---
 
 ## Endpoint 1 — `POST /generate-protocol`
 
-**Called by:** Frontend (Muktha)  
-**Implemented by:** Backend (Prasanna) → LLM Service (Simon)
+**Who calls it:** Muktha (Frontend)
+**Who implements it:** Prasanna (Backend) → calls Simon (LLM Service)
+**Purpose:** Takes a plain-English clinical question, returns a structured study protocol
 
-### Request
+### Request body
 
 ```json
 {
-  "question": "string — the clinical question in natural language"
+  "question": "string"
 }
 ```
 
-### Success Response `200`
+**Field notes:**
+| Field | Type | Required | Notes |
+|-------|------|----------|-------|
+| `question` | string | ✅ | The researcher's clinical question in plain English |
+
+### Success response — HTTP 200
+
+> ⏳ To be filled on Day 2 once Prasanna's Pydantic `StudyProtocol` model is reviewed.
+> Shape will be derived directly from `/docs/protocol_schema.json`.
 
 ```json
 {
-  "study_type": "cohort_characterization | incidence_analysis",
-  "cohort_definition": {
-    "condition": "string",
-    "drug": "string | null",
-    "observation_window": {
-      "start_date": "YYYY-MM-DD",
-      "end_date": "YYYY-MM-DD"
-    }
-  },
-  "comparator": "string | null",
-  "outcome": "string",
-  "analysis_parameters": {
-    "min_prior_obs_days": "integer",
-    "washout_period_days": "integer"
-  }
+  "_placeholder": "Prasanna to confirm field names and types by end of Day 2"
 }
 ```
 
-### Error Response `422 / 500`
+**Expected top-level fields (from protocol_schema.json — pending confirmation):**
+- `study_type`
+- `cohort_definition` (nested object)
+- `comparator`
+- `outcome`
+- `analysis_parameters` (nested object)
+
+### Error response — HTTP 422 / 500
+
+> ⏳ To be filled on Day 2.
 
 ```json
 {
-  "error_code": "PROTOCOL_GENERATION_FAILED",
-  "message": "string — human-readable description",
-  "recoverable": true
+  "_placeholder": "error shape to be confirmed"
 }
 ```
 
@@ -59,10 +83,11 @@
 
 ## Endpoint 2 — `POST /validate-concepts`
 
-**Called by:** Backend (Prasanna) internally after `/generate-protocol`  
-**Implemented by:** Backend (Prasanna) → ATHENA API / local fallback
+**Who calls it:** Prasanna (Backend — called internally after /generate-protocol)
+**Who implements it:** Prasanna (Backend) → calls ATHENA API or local fallback
+**Purpose:** Takes concept names from the protocol, returns OMOP concept IDs
 
-### Request
+### Request body
 
 ```json
 {
@@ -70,30 +95,32 @@
 }
 ```
 
-### Success Response `200`
+**Field notes:**
+| Field | Type | Required | Notes |
+|-------|------|----------|-------|
+| `concepts` | array of strings | ✅ | Concept names extracted from the protocol (e.g. "Type 2 Diabetes") |
+
+### Success response — HTTP 200
+
+> ⏳ To be filled on Day 2 once Prasanna's Pydantic `ConceptValidationResponse` model is reviewed.
 
 ```json
 {
-  "validated": [
-    {
-      "name": "string",
-      "concept_id": "integer",
-      "domain": "string",
-      "vocabulary": "string",
-      "matched": true
-    }
-  ],
-  "unmatched": ["string"]
+  "_placeholder": "Prasanna to confirm field names and types by end of Day 2"
 }
 ```
 
-### Error Response `500`
+**Expected fields (pending confirmation):**
+- `validated` — array of matched concepts with their OMOP concept IDs
+- `unmatched` — array of concept names that could not be resolved
+
+### Error response — HTTP 500
+
+> ⏳ To be filled on Day 2.
 
 ```json
 {
-  "error_code": "CONCEPT_VALIDATION_FAILED",
-  "message": "string",
-  "recoverable": true
+  "_placeholder": "error shape to be confirmed"
 }
 ```
 
@@ -101,71 +128,77 @@
 
 ## Endpoint 3 — `POST /execute-query`
 
-**Called by:** Frontend (Muktha) after researcher approves protocol  
-**Implemented by:** Backend (Prasanna) → Query Engine (Laya)
+**Who calls it:** Muktha (Frontend — after researcher approves the protocol)
+**Who implements it:** Prasanna (Backend) → calls Laya (Query Engine)
+**Purpose:** Runs the validated protocol as a cohort query against OMOP PostgreSQL, returns structured results
 
-### Request
+### Request body
+
+> ⏳ To be filled on Day 2. Will contain the approved protocol and validated concept IDs.
 
 ```json
 {
-  "protocol": { },
-  "validated_concepts": [ ]
+  "_placeholder": "shape depends on /generate-protocol and /validate-concepts responses — to be confirmed Day 2"
 }
 ```
 
-> `protocol` shape: same as `/generate-protocol` response  
-> `validated_concepts` shape: same as `/validate-concepts` response
+**Expected fields (pending confirmation):**
+- `protocol` — the approved StudyProtocol object
+- `validated_concepts` — the output of /validate-concepts
 
-### Success Response `200`
+### Success response — HTTP 200
+
+> ⏳ To be filled on Day 2 once Prasanna's `QueryResultsResponse` model is reviewed.
 
 ```json
 {
-  "cohort_size": "integer",
-  "demographics": {
-    "age_groups": {
-      "18-30": "integer",
-      "31-45": "integer",
-      "46-60": "integer",
-      "61+":   "integer"
-    },
-    "sex": {
-      "male":   "integer",
-      "female": "integer",
-      "other":  "integer"
-    }
-  },
-  "incidence_rate": "float | null",
-  "incidence_rate_unit": "per 1000 person-years | null",
-  "query_time_ms": "integer"
+  "_placeholder": "Prasanna to confirm field names and types by end of Day 2"
 }
 ```
 
-### Error Response `500`
+**Expected fields (pending confirmation):**
+- `cohort_size` — integer
+- `demographics` — nested object (age groups, sex breakdown)
+- `incidence_rate` — float or null
+- `incidence_rate_unit` — string or null
+- `query_time_ms` — integer
+
+### Error response — HTTP 500
+
+> ⏳ To be filled on Day 2.
 
 ```json
 {
-  "error_code": "QUERY_EXECUTION_FAILED",
-  "message": "string",
-  "recoverable": false
+  "_placeholder": "error shape to be confirmed"
 }
 ```
 
 ---
 
-## Constraints & Rules
+## Shared rules (agreed now — not placeholders)
 
-| Rule | Detail |
-|------|--------|
+These rules apply to all endpoints and are already locked in:
+
+| Rule | Value |
+|------|-------|
 | Date format | Always `YYYY-MM-DD` — no exceptions |
-| Null fields | Use JSON `null`, never empty string `""` |
-| Concept IDs | Always integers, never strings |
-| Error codes | Always `SCREAMING_SNAKE_CASE` |
-| `recoverable` | `true` = user can retry; `false` = pipeline must restart |
+| Null fields | Always JSON `null` — never empty string `""` |
+| Concept IDs | Always integers — never strings |
+| Error codes | Always `SCREAMING_SNAKE_CASE` (e.g. `PROTOCOL_GENERATION_FAILED`) |
+| `recoverable` flag | `true` = user can retry the same action; `false` = pipeline must restart from question input |
+| Content-Type | Always `application/json` on both request and response |
+| Base URL (local dev) | `http://localhost:8000` |
 
 ---
 
-## Change Log
+## Review sign-off (Day 2)
 
-| Date | Changed by | Change |
-|------|------------|--------|
-| Mar 29, 2026 | Rahul | Initial placeholder created |
+All five members must leave an explicit approval on the PR that fills in the placeholder sections.
+
+| Name | Role | Approved? |
+|------|------|-----------|
+| Rahul | QA / Integration Lead | — |
+| Simon | LLM / AI Engineer | — |
+| Laya | DB / OMOP Engineer | — |
+| Prasanna | Backend Engineer | — |
+| Muktha | Frontend Engineer | — |
