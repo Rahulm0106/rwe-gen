@@ -50,6 +50,7 @@ venv.bak/
 .env.*
 !.env.example
 *.env
+backend/.env
 secrets.json
 secrets.yaml
 
