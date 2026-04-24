@@ -1,20 +1,22 @@
 """
-config.py — Application configuration for the updated architecture.
+config.py — Backend configuration for the RWEGenAPI-backed FastAPI layer.
 
-WHAT CHANGED FROM SPRINT 1
-───────────────────────────
-Sprint 1 had:  GROQ_API_KEY, single LLM config
-Now we have:   Venice API (LLM), LOF/IMO proxy (concept mapping primary),
-               CONCEPT.csv local vocab (concept mapping fallback),
-               protocol_schema_validator.json path
+DESIGN
+──────
+Every knob mirrors a flag in Simon's llm/cli.py so the HTTP backend and
+his CLI produce identical runs for identical inputs. The mapping from env
+var to CLI flag is documented inline next to each field below, and the
+translation into Simon's PipelineSettings dataclass happens in
+main.py::_build_pipeline_settings().
 
-KEY DESIGN DECISION — env var names vs Simon's auto-detection
-──────────────────────────────────────────────────────────────
-Simon's concept_mapping_module reads LOF credentials via os.getenv() with
-multiple fallback names: client_id / CLIENT_ID / IMO_CLIENT_ID / IMO_API_KEY.
-This config.py uses explicit field names (lof_client_id, lof_client_secret)
-and passes them directly when constructing AthenaConceptResolver — so we never
-rely on Simon's env var auto-detection. This avoids hidden env var mismatches.
+LOF CREDENTIAL INJECTION
+────────────────────────
+Simon's concept_mapping_module._build_remote_client() reads LOF credentials
+via os.getenv() with multiple fallback names (client_id / CLIENT_ID /
+IMO_CLIENT_ID). The backend reads lof_client_id / lof_client_secret from
+this Settings object and writes them into os.environ at lifespan startup
+(main.py), so his detection logic still works while keeping the env-var
+names explicit in our config.
 """
 
 from functools import lru_cache
@@ -25,10 +27,32 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
 
     # ── Venice LLM ────────────────────────────────────────────────────────────
-    # Primary LLM provider. Models: zai-org-glm-5, kimi-k2-5 (Simon's defaults).
+    # Primary LLM provider. Mirrors Simon's CLI flags in llm/cli.py one-for-one
+    # so identical specs produce identical runs between CLI and HTTP backend.
+    #
+    # CLI flag                       → env var
+    # ─────────────────────────────────────────────────────────────
+    # --venice-api-key               → VENICE_API_KEY
+    # --venice-base-url              → VENICE_BASE_URL
+    # --venice-timeout               → VENICE_TIMEOUT_SECONDS
+    # --venice-model (repeatable)    → VENICE_MODELS (CSV of name[:retries])
+    # --mock-protocol-json           → LLM_MOCK_PROTOCOL_PATH
+    # --include-venice-system-prompt → INCLUDE_VENICE_SYSTEM_PROMPT (bool)
+    # --enable-semantic-verification → LLM_SEMANTIC_VERIFICATION_ENABLED (bool)
+    # --llm-verifier-model (rep.)    → LLM_VERIFIER_MODELS (CSV of name[:retries])
+    # --llm-verifier-timeout         → LLM_VERIFIER_TIMEOUT_SECONDS
+    #
+    # Empty VENICE_MODELS / LLM_VERIFIER_MODELS → Simon's defaults apply
+    # (see _parse_models in main.py, which mirrors llm/cli.py::parse_models).
     venice_api_key: Optional[str] = None
     venice_base_url: str = "https://api.venice.ai/api/v1"
     venice_timeout_seconds: int = 60
+    venice_models: str = ""                         # CSV, e.g. "zai-org-glm-5:2,kimi-k2-5:1"
+    llm_mock_protocol_path: Optional[str] = None
+    include_venice_system_prompt: bool = False
+    llm_semantic_verification_enabled: bool = False
+    llm_verifier_models: str = ""                   # CSV, same format as venice_models
+    llm_verifier_timeout_seconds: Optional[int] = None
 
     # ── LOF / IMO Normalize (concept mapping — primary path) ──────────────────
     # Leap of Faith proxy credentials for remote IMO Normalize calls.
@@ -60,10 +84,12 @@ class Settings(BaseSettings):
     athena_minimum_match_score: int = 120
 
     # ── Protocol schema validator ─────────────────────────────────────────────
-    # Simon's LLMConfig requires this file at startup.
-    # ProtocolLLMGenerator.__init__ raises LLMError(kind="schema_file_missing")
-    # if this path points to a non-existent file.
-    schema_path: str = "protocol_schema_validator.json"
+    # RWEGenAPI loads this at startup. A missing file surfaces as
+    # PipelineStageError(stage="llm", kind="schema_file_missing"). The default
+    # is relative to the uvicorn working dir (backend/); .env pins the canonical
+    # repo path.
+    # --schema-path
+    schema_path: str = "../docs/protocol_schema_validator.json"
 
     # ── Database ──────────────────────────────────────────────────────────────
     database_url: str = (
