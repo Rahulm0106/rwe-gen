@@ -33,9 +33,9 @@ export default function ProtocolReview() {
 
   const obs = protocol.cohort_definition?.observation_window
   const fields = [
-    { label: 'Study Type', value: protocol.study_type },
-    { label: 'Condition', value: protocol.cohort_definition?.condition },
-    { label: 'Outcome', value: protocol.outcome },
+    { label: 'Study Type', value: typeof protocol.study_type === 'string' ? protocol.study_type : JSON.stringify(protocol.study_type) },
+    { label: 'Condition', value: typeof protocol.cohort_definition?.condition === 'object' ? JSON.stringify(protocol.cohort_definition?.condition) : protocol.cohort_definition?.condition },
+    { label: 'Outcome', value: typeof protocol.outcome === 'object' ? protocol.outcome?.label ?? 'N/A' : protocol.outcome },
     { label: 'Observation Window', value: obs ? `${obs.start_date} to ${obs.end_date}` : 'N/A' },
     { label: 'Comparator', value: protocol.comparator ?? 'None' },
     { label: 'Min Prior Observation', value: protocol.analysis_parameters?.min_prior_obs_days + ' days' },
