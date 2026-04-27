@@ -24,22 +24,43 @@ export default function ProtocolReview() {
   function handleApprove() {
     try {
       const parsed = JSON.parse(draft)
-      setProtocol(parsed)
+      const updated = {
+        ...parsed,
+        study_type: editableFields.study_type,
+        original_question: editableFields.original_question,
+      }
+      setProtocol(updated)
       navigate('/concepts')
     } catch {
       setParseError('Invalid JSON — please fix before continuing.')
     }
   }
 
-  const obs = protocol.cohort_definition?.observation_window
-  const fields = [
-    { label: 'Study Type', value: typeof protocol.study_type === 'string' ? protocol.study_type : JSON.stringify(protocol.study_type) },
-    { label: 'Condition', value: typeof protocol.cohort_definition?.condition === 'object' ? JSON.stringify(protocol.cohort_definition?.condition) : protocol.cohort_definition?.condition },
-    { label: 'Outcome', value: typeof protocol.outcome === 'object' ? protocol.outcome?.label ?? 'N/A' : protocol.outcome },
-    { label: 'Observation Window', value: obs ? `${obs.start_date} to ${obs.end_date}` : 'N/A' },
-    { label: 'Comparator', value: protocol.comparator ?? 'None' },
-    { label: 'Min Prior Observation', value: protocol.analysis_parameters?.min_prior_obs_days + ' days' },
-  ]
+  function safeStr(val) {
+    if (val === null || val === undefined) return '—'
+    if (typeof val === 'string') return val
+    if (typeof val === 'number') return String(val)
+    if (typeof val === 'object') {
+      if (val.label) return val.label
+      if (val.name) return val.name
+      if (val.condition) return val.condition
+      return JSON.stringify(val)
+    }
+    return String(val)
+  }
+
+  const targetCohort = protocol.target_cohort || protocol.cohort_definition
+  const obsWindow = targetCohort?.observation_window || protocol.observation_window
+  const outcome = protocol.outcome_cohort || protocol.outcome
+
+  const [editableFields, setEditableFields] = useState({
+    study_type: safeStr(protocol.study_type),
+    condition: safeStr(targetCohort?.label || targetCohort?.condition || targetCohort?.name),
+    outcome: outcome?.required === false ? 'Not specified' : safeStr(outcome?.label || outcome?.name || outcome?.condition || outcome),
+    observation_window: obsWindow ? `${safeStr(obsWindow.start_date)} to ${safeStr(obsWindow.end_date)}` : 'N/A',
+    comparator: protocol.comparator?.enabled ? safeStr(protocol.comparator?.label || protocol.comparator?.definition) : 'None',
+    original_question: safeStr(protocol.original_question),
+  })
 
   return (
     <div className="max-w-6xl mx-auto">
@@ -76,12 +97,19 @@ export default function ProtocolReview() {
             <span className="text-[11px] font-bold text-slate-400 bg-slate-100 px-2 py-1 rounded">AI GENERATED</span>
           </div>
           <div className="p-6 space-y-3">
-            {fields.map(({ label, value }) => (
-              <div key={label} className="flex gap-4 p-3 rounded-lg bg-slate-50 border border-slate-100">
-                <div className="w-40 shrink-0">
-                  <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">{label}</p>
+            {Object.entries(editableFields).map(([key, value]) => (
+              <div key={key} className="flex gap-4 p-3 rounded-lg bg-slate-50 border border-slate-100 items-center">
+                <div className="w-44 shrink-0">
+                  <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">
+                    {key.replace(/_/g, ' ')}
+                  </p>
                 </div>
-                <p className="text-sm text-slate-800 font-medium">{value || '—'}</p>
+                <input
+                  type="text"
+                  value={value}
+                  onChange={(e) => setEditableFields(prev => ({ ...prev, [key]: e.target.value }))}
+                  className="flex-1 text-sm text-slate-800 font-medium bg-white border border-slate-200 rounded-lg px-3 py-1.5 focus:ring-2 focus:ring-teal-500/20 focus:border-teal-400 outline-none transition-all"
+                />
               </div>
             ))}
           </div>

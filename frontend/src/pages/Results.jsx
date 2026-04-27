@@ -11,7 +11,10 @@ export default function Results() {
 
   useEffect(() => {
     if (!protocol || !validatedConcepts) return
-    executeQuery(protocol, validatedConcepts)
+    executeQuery(
+      validatedConcepts?.protocol || protocol,
+      validatedConcepts?.mapped || []
+    )
       .then((res) => { setData(res); setResults(res) })
       .catch((err) => { setAppError(err.message); navigate('/error') })
       .finally(() => setLoading(false))

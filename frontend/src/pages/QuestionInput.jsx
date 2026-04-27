@@ -3,21 +3,6 @@ import { useNavigate } from 'react-router-dom'
 import { generateProtocol } from '../services/api'
 import { useApp } from '../context/AppContext'
 
-const EXAMPLES = [
-  {
-    icon: 'clinical_notes',
-    text: 'What is the incidence of kidney disease among Type 2 Diabetes patients on SGLT2 inhibitors versus Metformin?',
-  },
-  {
-    icon: 'medication',
-    text: 'Evaluate the 5-year survival rate of stage III NSCLC patients treated with immunotherapy in real-world settings.',
-  },
-  {
-    icon: 'monitoring',
-    text: 'Compare the rate of major adverse cardiovascular events in patients with prior MI starting new anti-hypertensive regimens.',
-  },
-]
-
 export default function QuestionInput() {
   const [question, setQuestion] = useState('')
   const [loading, setLoading] = useState(false)
@@ -43,9 +28,9 @@ export default function QuestionInput() {
     <div className="max-w-4xl mx-auto w-full space-y-8">
       {/* Header */}
       <div className="text-center space-y-2">
-        <h2 className="text-4xl font-bold tracking-tight text-slate-900">Define Your Clinical Protocol</h2>
+        <h2 className="text-4xl font-bold tracking-tight text-slate-900">Ask Your Clinical Question</h2>
         <p className="text-lg text-slate-500 max-w-2xl mx-auto">
-          Our AI-driven clinical pipeline transforms natural language inquiries into robust, reproducible study protocols in seconds.
+          Describe your research question in plain English. Our AI pipeline will generate a structured study protocol automatically.
         </p>
       </div>
 
@@ -63,17 +48,7 @@ export default function QuestionInput() {
             />
             <p className="text-xs text-slate-400 mt-1">{question.length} characters</p>
           </div>
-          <div className="bg-slate-50 border-t border-slate-100 px-6 py-4 flex justify-between items-center">
-            <div className="flex gap-4">
-              <button className="flex items-center gap-2 text-slate-500 hover:text-teal-600 transition-colors text-sm font-medium">
-                <span className="material-symbols-outlined text-lg">attach_file</span>
-                Attach Reference
-              </button>
-              <button className="flex items-center gap-2 text-slate-500 hover:text-teal-600 transition-colors text-sm font-medium">
-                <span className="material-symbols-outlined text-lg">database</span>
-                Select Data Sources
-              </button>
-            </div>
+          <div className="bg-slate-50 border-t border-slate-100 px-6 py-4 flex justify-end items-center">
             <button
               onClick={handleSubmit}
               disabled={loading || !question.trim()}
@@ -92,26 +67,6 @@ export default function QuestionInput() {
               )}
             </button>
           </div>
-        </div>
-      </div>
-
-      {/* Example Questions */}
-      <div>
-        <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3">Example Questions</h3>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          {EXAMPLES.map((ex, i) => (
-            <div
-              key={i}
-              onClick={() => setQuestion(ex.text)}
-              className="bg-white border border-slate-200 p-4 rounded-lg hover:border-teal-200 hover:bg-teal-50 transition-all cursor-pointer group"
-            >
-              <div className="flex justify-between items-start mb-2">
-                <span className="material-symbols-outlined text-teal-600">{ex.icon}</span>
-                <span className="material-symbols-outlined text-slate-300 opacity-0 group-hover:opacity-100 transition-opacity">arrow_forward</span>
-              </div>
-              <p className="text-sm text-slate-700 leading-snug">{ex.text}</p>
-            </div>
-          ))}
         </div>
       </div>
 

@@ -12,11 +12,11 @@ export default function Concepts() {
 
   useEffect(() => {
     if (!protocol) return
-    const terms = [protocol.cohort_definition?.condition, protocol.outcome].filter(Boolean)
-    validateConcepts(terms)
+    validateConcepts(protocol)
       .then((data) => {
-        setValidated(data.validated || [])
+        setValidated(data.mapped || data.validated || [])
         setUnmatched(data.unmatched || [])
+        console.log('validateConcepts response:', JSON.stringify(data, null, 2))
         setValidatedConcepts(data)
       })
       .catch((err) => {
