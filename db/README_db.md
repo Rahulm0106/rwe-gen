@@ -1,65 +1,207 @@
-# DB — OMOP PostgreSQL Setup
 
-**Owner:** Laya  
-**Stack:** PostgreSQL 13+ · Synthea · Python
+**Owner:** Laya Fakher (DB/Synthea)  
+**Consumer:** Prasanna Pravin Renapurkar (Backend)  
+**Verified by:** Rahul Sanjay Mandviya (QA)
 
 ---
 
-## Setup (to be completed by Laya — Sprint 1)
+## What this folder contains
 
-### 1. Generate Synthea data
+| File | Purpose |
+|------|---------|
+| `rwegen_etl_setup.sql` | Full ETL — creates all OMOP tables and loads Synthea data. Run once. |
+| `sprint1_verification.sql` | QA verification script — Rahul runs this to sign off Sprint 1. |
+| `synthea/` | Drop your Synthea CSV output here before running the ETL. Not committed to git. |
+
+---
+
+## Prerequisites
+
+- Docker + docker-compose running (Prasanna sets this up)
+- PostgreSQL container up and database `rwegen` created
+- Synthea CSVs generated and placed in `db/synthea/`
+
+If you haven't generated Synthea data yet, see **Generating Synthea Data** below.
+
+---
+
+## Step 1 — Generate Synthea data (Laya)
+
+Run Synthea with all 4 required disease modules:
 
 ```bash
-# From the Synthea directory
-./run_synthea -p 1000 --exporter.fhir.export false --exporter.csv.export true -m diabetes
+java -jar synthea-with-dependencies.jar \
+  -p 10000 \
+  --exporter.csv.export true \
+  -m diabetes,metabolic_syndrome_disease,hypertension,chronic_kidney_disease \
+  Massachusetts
 ```
 
-### 2. Load OMOP CDM into PostgreSQL
+Copy the output CSVs into `db/synthea/`:
+
+```
+db/synthea/
+├── patients.csv
+├── encounters.csv
+├── conditions.csv
+├── medications.csv
+└── observations.csv
+```
+
+These files are not committed to git (too large). They stay local.
+
+---
+
+## Step 2 — Start the database (Prasanna)
 
 ```bash
-# Database name: omop_rwe
-psql -U postgres -c "CREATE DATABASE omop_rwe;"
-psql -U postgres -d omop_rwe -f db/sql/create_omop_tables.sql
+docker-compose up -d db
 ```
 
-### 3. Verify
+Wait for the container to be healthy, then create the database:
 
 ```bash
-psql -U postgres -d omop_rwe -f db/sql/verify_omop.sql
+docker exec -it rwegen_db psql -U postgres -c "CREATE DATABASE rwegen;"
+```
+
+
+---
+
+## Step 3 — Copy CSVs into the container (Laya or Prasanna)
+
+```bash
+docker cp db/synthea/. rwegen_db:/tmp/synthea/
+```
+
+Verify files are there:
+
+```bash
+docker exec -it rwegen_db ls /tmp/synthea/
+# Should show: patients.csv encounters.csv conditions.csv medications.csv observations.csv
 ```
 
 ---
 
-## Key Files (to be created by Laya)
+## Step 4 — Run the ETL (Laya)
 
-| File                        | Purpose                                      |
-|-----------------------------|----------------------------------------------|
-| `sql/create_omop_tables.sql`| OMOP CDM table definitions                   |
-| `sql/verify_omop.sql`       | Row counts + T2D concept sanity check        |
-| `sql/cohort_characterization.sql` | Parameterised cohort query template   |
-| `sql/incidence_analysis.sql`| Parameterised incidence query template       |
-| `README_db.md`              | Full setup steps, verified row counts        |
+```bash
+docker exec -it rwegen_db psql -U postgres -d rwegen -f /tmp/rwegen_etl_setup.sql
+```
 
----
+Or copy the script in first if it's not already mounted:
 
-## T2D Verification Query
+```bash
+docker cp db/rwegen_etl_setup.sql rwegen_db:/tmp/rwegen_etl_setup.sql
+docker exec -it rwegen_db psql -U postgres -d rwegen -f /tmp/rwegen_etl_setup.sql
+```
 
-```sql
-SELECT COUNT(*)
-FROM condition_occurrence
-WHERE condition_concept_id = 201826;
--- Expected: > 0 rows
+The script prints row counts at the end of each section. Expected final output:
+
+```
+person                ~10,000 rows
+visit_occurrence      ~500,000+ rows
+condition_occurrence  ~420,000+ rows
+drug_exposure         ~600,000+ rows
+measurement           ~5,700,000+ rows
+observation           ~several million rows
+observation_period    ~10,000 rows
 ```
 
 ---
 
-## Environment
+## Step 5 — Verify (Rahul)
 
-| Item             | Value (to be filled by Laya) |
-|------------------|------------------------------|
-| OS               | —                            |
-| Java version     | —                            |
-| Synthea version  | —                            |
-| PostgreSQL ver.  | —                            |
-| Patient count    | —                            |
-| T2D row count    | —                            |
+```bash
+docker cp db/sprint1_verification.sql rwegen_db:/tmp/sprint1_verification.sql
+docker exec -it rwegen_db psql -U postgres -d rwegen -f /tmp/sprint1_verification.sql
+```
+
+All 11 gates in Section 11 must show **PASS** before Sprint 2 begins.  
+Screenshot Section 11 output and post to the team channel.
+
+---
+
+## Connection details for Prasanna (FastAPI / psycopg2)
+
+```
+host:     localhost  (or 'db' inside docker network)
+port:     5432
+database: rwegen
+user:     postgres
+password: set in docker-compose.yml / .env
+```
+
+psycopg2 connection string:
+```
+postgresql://postgres:<password>@db:5432/rwegen
+```
+
+---
+
+## OMOP Tables loaded
+
+| Table | Status | Used for |
+|-------|--------|----------|
+| `person` | Core | Demographics on every result screen |
+| `visit_occurrence` | Core | Hospitalization filters |
+| `condition_occurrence` | Core | All cohort definitions |
+| `drug_exposure` | Core | Drug filters (metformin, ACE inhibitors) |
+| `observation_period` | Core | Observation window for incidence queries |
+| `measurement` | Full | HbA1c, BMI, BP, eGFR, Creatinine, LDL |
+| `observation` | Limited | Smoking status only |
+| `concept` | Placeholder | Loaded separately by Simon (ATHENA) |
+
+`death` table is **out of scope** for MVP.
+
+---
+
+## Key concept IDs (for Prasanna SQL template reference)
+
+### Conditions
+| Disease | concept_id |
+|---------|-----------|
+| Type 2 Diabetes | 201826 |
+| Obesity | 433736 |
+| Hypertension | 316866 |
+| Chronic Kidney Disease | 46271022 |
+
+### Labs (measurement_concept_id)
+| Lab | concept_id |
+|-----|-----------|
+| HbA1c | 3004410 |
+| BMI | 3038553 |
+| Systolic BP | 3004249 |
+| Diastolic BP | 3012888 |
+| eGFR | 3049187 |
+| Serum Creatinine | 3016723 |
+| LDL Cholesterol | 3007070 |
+
+### Drugs (drug_concept_id)
+| Drug | concept_id |
+|------|-----------|
+| Metformin | 1503297 |
+| Lisinopril | 1308216 |
+| Amlodipine | 1332418 |
+| Atorvastatin | 1545958 |
+| Insulin | 1516766 |
+
+---
+
+## Re-running the ETL
+
+The ETL script is fully idempotent — it drops and recreates everything.  
+Safe to re-run at any time:
+
+```bash
+docker exec -it rwegen_db psql -U postgres -d rwegen -f /tmp/rwegen_etl_setup.sql
+```
+
+---
+
+## Questions
+
+- ETL / data issues → Laya Fakher  
+- Docker / connection issues → Prasanna Pravin Renapurkar  
+- Verification / test failures → Rahul Sanjay Mandviya
+
+    

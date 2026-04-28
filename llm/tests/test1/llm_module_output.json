@@ -1,0 +1,167 @@
+{
+  "schema_version": "1.0.0",
+  "protocol_status": "needs_mapping",
+  "original_question": "What is the incidence of chronic kidney disease after type 2 diabetes diagnosis in adults aged 40 to 75?",
+  "normalized_question": "Among adults aged 40 to 75, what is the incidence of chronic kidney disease after a first observed type 2 diabetes diagnosis?",
+  "study_type": "incidence_analysis",
+  "target_cohort": {
+    "label": "Adults aged 40-75 with first observed type 2 diabetes diagnosis",
+    "index_event": {
+      "event_type": "condition",
+      "concept_refs": [
+        "concept_1"
+      ],
+      "occurrence": "first",
+      "index_date_rule": "first_qualifying_event"
+    },
+    "inclusion_criteria": [],
+    "exclusion_criteria": [
+      {
+        "criterion_id": "excl_1",
+        "domain": "condition",
+        "concept_refs": [
+          "concept_1"
+        ],
+        "rule_type": "not_has",
+        "operator": "exists",
+        "value": null,
+        "unit": null,
+        "min_occurrences": 1,
+        "timing": {
+          "relation_to_index": "before",
+          "start_day_offset": 365,
+          "end_day_offset": 1
+        }
+      },
+      {
+        "criterion_id": "excl_2",
+        "domain": "condition",
+        "concept_refs": [
+          "concept_2"
+        ],
+        "rule_type": "not_has",
+        "operator": "exists",
+        "value": null,
+        "unit": null,
+        "min_occurrences": 1,
+        "timing": {
+          "relation_to_index": "on_or_before",
+          "start_day_offset": 365,
+          "end_day_offset": 0
+        }
+      }
+    ],
+    "demographic_filters": {
+      "age": {
+        "min": 40,
+        "max": 75,
+        "unit": "years",
+        "evaluated_at": "index_date"
+      },
+      "sex": [
+        "male",
+        "female",
+        "unknown"
+      ]
+    }
+  },
+  "comparator": {
+    "enabled": false,
+    "label": null,
+    "definition": null,
+    "comparison_mode": "none"
+  },
+  "outcome": {
+    "required": true,
+    "label": "Incident chronic kidney disease",
+    "concept_refs": [
+      "concept_2"
+    ],
+    "occurrence": "first",
+    "incident_only": true,
+    "clean_period_days": 365
+  },
+  "time_windows": {
+    "calendar_window": {
+      "start_date": null,
+      "end_date": null
+    },
+    "prior_observation": {
+      "min_prior_observation_days": 365
+    },
+    "washout": {
+      "washout_period_days": null
+    },
+    "time_at_risk": {
+      "start_anchor": "index_date",
+      "start_day_offset": 1,
+      "end_anchor": "end_of_observation",
+      "end_day_offset": 0,
+      "max_followup_days": null,
+      "censor_on_outcome": true
+    }
+  },
+  "requested_outputs": {
+    "measures": [
+      "cohort_size",
+      "demographics",
+      "incidence_rate",
+      "event_count",
+      "person_time"
+    ],
+    "stratify_by": []
+  },
+  "concept_sets": [
+    {
+      "concept_ref": "concept_1",
+      "raw_text": "type 2 diabetes",
+      "domain": "condition",
+      "standard_vocab_preference": "SNOMED",
+      "mapping": {
+        "status": "unmapped",
+        "omop_concept_id": null,
+        "omop_concept_name": null,
+        "candidate_concepts": []
+      }
+    },
+    {
+      "concept_ref": "concept_2",
+      "raw_text": "chronic kidney disease",
+      "domain": "condition",
+      "standard_vocab_preference": "SNOMED",
+      "mapping": {
+        "status": "unmapped",
+        "omop_concept_id": null,
+        "omop_concept_name": null,
+        "candidate_concepts": []
+      }
+    }
+  ],
+  "assumptions": [
+    "Type 2 diabetes incidence is approximated by the first observed qualifying diagnosis after at least 365 days of prior observation with no recorded type 2 diabetes diagnosis during that baseline period.",
+    "Incident chronic kidney disease is defined as the first qualifying diagnosis occurring after the index date among patients with no recorded chronic kidney disease on or before index during the 365-day baseline period.",
+    "Chronic kidney disease is identified from diagnosis codes rather than laboratory-based KDIGO criteria unless concept mapping is later expanded.",
+    "Same-day chronic kidney disease diagnoses are not counted as incident post-diabetes outcomes; follow-up starts 1 day after index."
+  ],
+  "issues": {
+    "warnings": [
+      {
+        "code": "OUTCOME_DEFINITION_LIMITATION",
+        "message": "Chronic kidney disease incidence based only on diagnosis codes may underestimate disease compared with lab-based definitions using eGFR and albuminuria.",
+        "field_path": "outcome"
+      },
+      {
+        "code": "INCIDENT_T2DM_APPROXIMATION",
+        "message": "The study approximates new type 2 diabetes diagnosis using first observed diagnosis after 365 days of prior observation; true disease onset may precede the recorded index date.",
+        "field_path": "target_cohort.index_event"
+      }
+    ],
+    "blocking_errors": []
+  },
+  "execution": {
+    "human_review_required": true,
+    "human_mapping_confirmation_required": true,
+    "sql_template": "incidence_analysis",
+    "ready_for_execution": false
+  }
+}

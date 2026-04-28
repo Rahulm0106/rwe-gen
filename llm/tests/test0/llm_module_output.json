@@ -1,0 +1,158 @@
+{
+  "schema_version": "1.0.0",
+  "protocol_status": "needs_mapping",
+  "original_question": "Characterize adults with type 2 diabetes treated with metformin in the last 5 years.",
+  "normalized_question": "Characterize adults aged 18 years or older with type 2 diabetes who had at least one metformin drug exposure between 2021-04-21 and 2026-04-21.",
+  "study_type": "cohort_characterization",
+  "target_cohort": {
+    "label": "Adults with type 2 diabetes and metformin exposure in the last 5 years",
+    "index_event": {
+      "event_type": "drug_exposure",
+      "concept_refs": [
+        "concept_2"
+      ],
+      "occurrence": "first",
+      "index_date_rule": "first_qualifying_event"
+    },
+    "inclusion_criteria": [
+      {
+        "criterion_id": "criterion_1",
+        "domain": "condition",
+        "concept_refs": [
+          "concept_1"
+        ],
+        "rule_type": "has",
+        "operator": "exists",
+        "value": null,
+        "unit": null,
+        "min_occurrences": 1,
+        "timing": {
+          "relation_to_index": "on_or_before",
+          "start_day_offset": null,
+          "end_day_offset": 0
+        }
+      }
+    ],
+    "exclusion_criteria": [],
+    "demographic_filters": {
+      "age": {
+        "min": 18,
+        "max": null,
+        "unit": "years",
+        "evaluated_at": "index_date"
+      },
+      "sex": [
+        "male",
+        "female",
+        "unknown"
+      ]
+    }
+  },
+  "comparator": {
+    "enabled": false,
+    "label": null,
+    "definition": null,
+    "comparison_mode": "none"
+  },
+  "outcome": {
+    "required": false,
+    "label": null,
+    "concept_refs": [],
+    "occurrence": "first",
+    "incident_only": false,
+    "clean_period_days": null
+  },
+  "time_windows": {
+    "calendar_window": {
+      "start_date": "2021-04-21",
+      "end_date": "2026-04-21"
+    },
+    "prior_observation": {
+      "min_prior_observation_days": null
+    },
+    "washout": {
+      "washout_period_days": null
+    },
+    "time_at_risk": {
+      "start_anchor": "index_date",
+      "start_day_offset": 0,
+      "end_anchor": "end_of_observation",
+      "end_day_offset": null,
+      "max_followup_days": null,
+      "censor_on_outcome": false
+    }
+  },
+  "requested_outputs": {
+    "measures": [
+      "cohort_size",
+      "demographics"
+    ],
+    "stratify_by": [
+      "sex",
+      "age_group"
+    ]
+  },
+  "concept_sets": [
+    {
+      "concept_ref": "concept_1",
+      "raw_text": "type 2 diabetes",
+      "domain": "condition",
+      "standard_vocab_preference": "SNOMED",
+      "mapping": {
+        "status": "unmapped",
+        "omop_concept_id": null,
+        "omop_concept_name": null,
+        "candidate_concepts": []
+      }
+    },
+    {
+      "concept_ref": "concept_2",
+      "raw_text": "metformin",
+      "domain": "drug",
+      "standard_vocab_preference": "RxNorm",
+      "mapping": {
+        "status": "unmapped",
+        "omop_concept_id": null,
+        "omop_concept_name": null,
+        "candidate_concepts": []
+      }
+    }
+  ],
+  "assumptions": [
+    "Interpreted 'last 5 years' as the calendar window from 2021-04-21 through 2026-04-21.",
+    "Defined cohort entry as the first qualifying metformin exposure within the calendar window.",
+    "Required evidence of type 2 diabetes on or before the metformin index date.",
+    "Did not require minimum prior observation or a washout period, so prevalent metformin users may be included."
+  ],
+  "issues": {
+    "warnings": [
+      {
+        "code": "CALENDAR_WINDOW_ASSUMPTION",
+        "message": "The phrase 'last 5 years' was operationalized as a fixed calendar window from 2021-04-21 to 2026-04-21 based on the current date.",
+        "field_path": "time_windows.calendar_window"
+      },
+      {
+        "code": "INDEX_EVENT_ASSUMPTION",
+        "message": "The cohort was anchored on the first qualifying metformin exposure within the calendar window; this includes prevalent metformin users rather than restricting to new users.",
+        "field_path": "target_cohort.index_event"
+      },
+      {
+        "code": "DIAGNOSIS_TIMING_ASSUMPTION",
+        "message": "Type 2 diabetes was required on or before the metformin index date; delayed diagnosis coding after treatment initiation would not qualify.",
+        "field_path": "target_cohort.inclusion_criteria[0].timing"
+      },
+      {
+        "code": "NO_PRIOR_OBSERVATION_REQUIREMENT",
+        "message": "No minimum prior observation period was specified, which may limit completeness of baseline characterization.",
+        "field_path": "time_windows.prior_observation"
+      }
+    ],
+    "blocking_errors": []
+  },
+  "execution": {
+    "human_review_required": true,
+    "human_mapping_confirmation_required": true,
+    "sql_template": "cohort_characterization",
+    "ready_for_execution": false
+  }
+}

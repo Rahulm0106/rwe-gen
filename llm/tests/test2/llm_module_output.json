@@ -1,0 +1,153 @@
+{
+  "schema_version": "1.0.0",
+  "protocol_status": "needs_mapping",
+  "original_question": "Among adults with obesity, characterize patients who also have hypertension.",
+  "normalized_question": "Among adults with obesity, characterize the subgroup with prevalent hypertension at or before obesity cohort entry.",
+  "study_type": "cohort_characterization",
+  "target_cohort": {
+    "label": "Adults with obesity and hypertension",
+    "index_event": {
+      "event_type": "condition",
+      "concept_refs": [
+        "concept_1"
+      ],
+      "occurrence": "first",
+      "index_date_rule": "first_qualifying_event"
+    },
+    "inclusion_criteria": [
+      {
+        "criterion_id": "criterion_1",
+        "domain": "condition",
+        "concept_refs": [
+          "concept_2"
+        ],
+        "rule_type": "has",
+        "operator": "exists",
+        "value": null,
+        "unit": null,
+        "min_occurrences": 1,
+        "timing": {
+          "relation_to_index": "on_or_before",
+          "start_day_offset": null,
+          "end_day_offset": 0
+        }
+      }
+    ],
+    "exclusion_criteria": [],
+    "demographic_filters": {
+      "age": {
+        "min": 18,
+        "max": null,
+        "unit": "years",
+        "evaluated_at": "index_date"
+      },
+      "sex": [
+        "male",
+        "female",
+        "unknown"
+      ]
+    }
+  },
+  "comparator": {
+    "enabled": false,
+    "label": null,
+    "definition": null,
+    "comparison_mode": "none"
+  },
+  "outcome": {
+    "required": false,
+    "label": null,
+    "concept_refs": [],
+    "occurrence": "first",
+    "incident_only": false,
+    "clean_period_days": null
+  },
+  "time_windows": {
+    "calendar_window": {
+      "start_date": null,
+      "end_date": null
+    },
+    "prior_observation": {
+      "min_prior_observation_days": null
+    },
+    "washout": {
+      "washout_period_days": null
+    },
+    "time_at_risk": {
+      "start_anchor": "index_date",
+      "start_day_offset": 0,
+      "end_anchor": "end_of_observation",
+      "end_day_offset": null,
+      "max_followup_days": null,
+      "censor_on_outcome": false
+    }
+  },
+  "requested_outputs": {
+    "measures": [
+      "cohort_size",
+      "demographics"
+    ],
+    "stratify_by": [
+      "sex",
+      "age_group"
+    ]
+  },
+  "concept_sets": [
+    {
+      "concept_ref": "concept_1",
+      "raw_text": "obesity",
+      "domain": "condition",
+      "standard_vocab_preference": "SNOMED",
+      "mapping": {
+        "status": "unmapped",
+        "omop_concept_id": null,
+        "omop_concept_name": null,
+        "candidate_concepts": []
+      }
+    },
+    {
+      "concept_ref": "concept_2",
+      "raw_text": "hypertension",
+      "domain": "condition",
+      "standard_vocab_preference": "SNOMED",
+      "mapping": {
+        "status": "unmapped",
+        "omop_concept_id": null,
+        "omop_concept_name": null,
+        "candidate_concepts": []
+      }
+    }
+  ],
+  "assumptions": [
+    "Adults are defined as age 18 years or older at the index date.",
+    "Cohort entry is anchored on the first qualifying obesity condition occurrence.",
+    "Hypertension is treated as a prevalent comorbidity if recorded on or before the obesity index date.",
+    "Obesity and hypertension are operationalized using diagnosis-based condition concepts unless phenotype refinement is specified during mapping."
+  ],
+  "issues": {
+    "warnings": [
+      {
+        "code": "INDEXING_ASSUMPTION",
+        "message": "The protocol indexes cohort entry on the first obesity diagnosis and requires hypertension on or before that date; this may exclude patients whose hypertension is first recorded after obesity cohort entry despite having underlying hypertension.",
+        "field_path": "target_cohort.index_event"
+      },
+      {
+        "code": "PHENOTYPE_AMBIGUITY",
+        "message": "Obesity may be defined by diagnosis codes, BMI measurement, or both; this protocol currently uses diagnosis-based obesity only.",
+        "field_path": "concept_sets"
+      },
+      {
+        "code": "PHENOTYPE_AMBIGUITY",
+        "message": "Hypertension may be defined by diagnosis codes, blood pressure measurements, antihypertensive treatment, or combinations thereof; this protocol currently uses diagnosis-based hypertension only.",
+        "field_path": "concept_sets"
+      }
+    ],
+    "blocking_errors": []
+  },
+  "execution": {
+    "human_review_required": true,
+    "human_mapping_confirmation_required": true,
+    "sql_template": "cohort_characterization",
+    "ready_for_execution": false
+  }
+}
