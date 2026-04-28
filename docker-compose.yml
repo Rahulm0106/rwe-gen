@@ -11,16 +11,21 @@ services:
       POSTGRES_USER: rwe_user
       POSTGRES_PASSWORD: rwe_dev_password
     ports:
-      - "5432:5432"
+      - "5433:5432"
     volumes:
       - db_data:/var/lib/postgresql/data
       - ./db/sql:/docker-entrypoint-initdb.d
+      # Synthea CSVs — read-only, consumed by 02_load_synthea.sql via COPY.
+      - ./db/synthea:/synthea:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U rwe_user -d omop_rwe"]
       interval: 10s
       timeout: 5s
       retries: 5
-      start_period: 30s
+      # Long start_period: the first boot runs 01/02/03 SQL scripts which
+      # COPY ~1.6 GB observations.csv and rebuild measurement/condition_occurrence.
+      # Subsequent boots skip init scripts and become healthy in seconds.
+      start_period: 1800s
 
   backend:
     build:
