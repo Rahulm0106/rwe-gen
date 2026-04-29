@@ -327,7 +327,9 @@ async def generate_protocol(
     logger.info(f"generate_protocol — question: '{request.question[:80]}'")
 
     try:
-        protocol = http_request.app.state.rwe.generate_protocol(request.question)
+        protocol = http_request.app.state.rwe.generate_protocol(
+            request.question, verify=request.verify
+        )
     except PipelineStageError as exc:
         logger.error(f"generate_protocol — {exc.stage}/{exc.kind}: {exc}")
         return _stage_error_to_response(exc)

@@ -32,6 +32,12 @@ class ProtocolRequest(BaseModel):
     """Step 1 — researcher types a plain-English clinical question."""
     question: str = Field(..., min_length=10,
                           description="Plain-English clinical research question")
+    verify: bool = Field(
+        default=False,
+        description="If true, run the optional semantic-verification LLM pass "
+                    "(slower, higher-fidelity). Overrides the server-side "
+                    "LLM_SEMANTIC_VERIFICATION_ENABLED default.",
+    )
 
 
 class ConceptValidationRequest(BaseModel):

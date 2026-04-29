@@ -118,9 +118,11 @@ class RWEGenAPI:
             self._sql_populator = OmopSqlTemplatePopulator()
         return self._sql_populator
 
-    def generate_protocol(self, question: str) -> dict[str, Any]:
+    def generate_protocol(
+        self, question: str, *, verify: bool | None = None
+    ) -> dict[str, Any]:
         try:
-            return self.protocol_generator.generate_protocol(question)
+            return self.protocol_generator.generate_protocol(question, verify=verify)
         except LLMError as exc:
             raise PipelineStageError("llm", exc.kind, str(exc), details=exc.details) from exc
 
@@ -136,8 +138,10 @@ class RWEGenAPI:
         except SqlPopulationError as exc:
             raise PipelineStageError("sql", exc.kind, str(exc), details=exc.details) from exc
 
-    def run_pipeline(self, question: str) -> dict[str, Any]:
-        protocol = self.generate_protocol(question)
+    def run_pipeline(
+        self, question: str, *, verify: bool | None = None
+    ) -> dict[str, Any]:
+        protocol = self.generate_protocol(question, verify=verify)
         mapped_protocol = self.map_protocol(protocol)
         sql_result = self.populate_sql(mapped_protocol)
         return {
