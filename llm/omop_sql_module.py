@@ -264,16 +264,14 @@ class OmopSqlTemplatePopulator:
         COUNT(o.person_id) AS event_count,
         SUM(
             GREATEST(
-                EXTRACT(DAY FROM (
-                    COALESCE(o.outcome_date, CURRENT_DATE) - c.index_date
-                )),
+                (COALESCE(o.outcome_date, CURRENT_DATE) - c.index_date),
                 0
             )
         ) AS person_time_days,
         CASE
-            WHEN SUM(GREATEST(EXTRACT(DAY FROM (COALESCE(o.outcome_date, CURRENT_DATE) - c.index_date)), 0)) = 0 THEN NULL
+            WHEN SUM(GREATEST((COALESCE(o.outcome_date, CURRENT_DATE) - c.index_date), 0)) = 0 THEN NULL
             ELSE COUNT(o.person_id)::numeric /
-                 NULLIF(SUM(GREATEST(EXTRACT(DAY FROM (COALESCE(o.outcome_date, CURRENT_DATE) - c.index_date)), 0)), 0)
+                 NULLIF(SUM(GREATEST((COALESCE(o.outcome_date, CURRENT_DATE) - c.index_date), 0)), 0)
         END AS incidence_per_person_day
     FROM {cohort_alias} c
     LEFT JOIN {cohort_alias}_outcomes o ON o.person_id = c.person_id
