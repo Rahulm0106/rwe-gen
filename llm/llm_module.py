@@ -6,7 +6,7 @@ import re
 from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 
 import requests
 from jsonschema import Draft202012Validator
@@ -83,7 +83,11 @@ class ProtocolLLMGenerator:
             ]
 
     def generate_protocol(
-        self, question: str, *, verify: bool | None = None
+        self,
+        question: str,
+        *,
+        verify: bool | None = None,
+        on_progress: Callable[[dict], None] | None = None,
     ) -> dict[str, Any]:
         question = question.strip()
         if not question:
@@ -103,10 +107,18 @@ class ProtocolLLMGenerator:
         if self.config.mock_protocol_path:
             protocol = self._load_and_validate_mock_protocol(question)
         else:
-            interpretation = self._generate_interpretation(question, api_key=api_key or "")
+            interpretation = self._generate_interpretation(
+                question, api_key=api_key or "", on_progress=on_progress
+            )
+            if on_progress:
+                on_progress({"event": "interpretation_completed"})
             protocol = self._build_protocol_from_interpretation(question, interpretation)
+            if on_progress:
+                on_progress({"event": "protocol_built"})
             protocol = self._apply_pre_mapping_defaults(protocol, question)
             self._validate_protocol(protocol)
+            if on_progress:
+                on_progress({"event": "schema_validated"})
 
         verify_enabled = (
             verify if verify is not None else self.config.semantic_verification_enabled
@@ -117,7 +129,11 @@ class ProtocolLLMGenerator:
                     "Semantic verification was enabled but no Venice API key is available.",
                     kind="authentication",
                 )
+            if on_progress:
+                on_progress({"event": "verification_started"})
             protocol = self._semantic_verify_protocol(question, protocol, api_key)
+            if on_progress:
+                on_progress({"event": "verification_completed"})
 
         return protocol
 
@@ -210,7 +226,13 @@ class ProtocolLLMGenerator:
     # ---------------------------------------------------------------------
     # Generation stage
     # ---------------------------------------------------------------------
-    def _generate_interpretation(self, question: str, *, api_key: str) -> dict[str, Any]:
+    def _generate_interpretation(
+        self,
+        question: str,
+        *,
+        api_key: str,
+        on_progress: Callable[[dict], None] | None = None,
+    ) -> dict[str, Any]:
         base_messages = self._build_generation_messages(question)
         failures: list[dict[str, Any]] = []
 
@@ -218,6 +240,13 @@ class ProtocolLLMGenerator:
             messages = list(base_messages)
             previous_response: str | None = None
             for attempt in range(1, model_config.retries + 1):
+                if on_progress:
+                    on_progress({
+                        "event": "interpretation_attempt",
+                        "model": model_config.name,
+                        "attempt": attempt,
+                        "max_attempts": model_config.retries,
+                    })
                 try:
                     response_text = self._call_venice_api(
                         api_key=api_key,

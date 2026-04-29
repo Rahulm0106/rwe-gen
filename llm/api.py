@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from concept_mapping_module import AthenaApiConfig, AthenaConceptResolver, AthenaError, LocalVocabularyConfig
 from llm_module import LLMConfig, LLMError, ProtocolLLMGenerator, VeniceModelConfig
@@ -119,10 +119,16 @@ class RWEGenAPI:
         return self._sql_populator
 
     def generate_protocol(
-        self, question: str, *, verify: bool | None = None
+        self,
+        question: str,
+        *,
+        verify: bool | None = None,
+        on_progress: Callable[[dict], None] | None = None,
     ) -> dict[str, Any]:
         try:
-            return self.protocol_generator.generate_protocol(question, verify=verify)
+            return self.protocol_generator.generate_protocol(
+                question, verify=verify, on_progress=on_progress
+            )
         except LLMError as exc:
             raise PipelineStageError("llm", exc.kind, str(exc), details=exc.details) from exc
 
@@ -139,9 +145,13 @@ class RWEGenAPI:
             raise PipelineStageError("sql", exc.kind, str(exc), details=exc.details) from exc
 
     def run_pipeline(
-        self, question: str, *, verify: bool | None = None
+        self,
+        question: str,
+        *,
+        verify: bool | None = None,
+        on_progress: Callable[[dict], None] | None = None,
     ) -> dict[str, Any]:
-        protocol = self.generate_protocol(question, verify=verify)
+        protocol = self.generate_protocol(question, verify=verify, on_progress=on_progress)
         mapped_protocol = self.map_protocol(protocol)
         sql_result = self.populate_sql(mapped_protocol)
         return {

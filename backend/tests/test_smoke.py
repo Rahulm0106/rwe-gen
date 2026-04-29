@@ -1,5 +1,5 @@
 """
-tests/test_smoke.py — Updated smoke tests for Sprint 2 architecture.
+tests/test_smoke.py — Updated smoke tests for Sprint 2 architecture + stream endpoint.
 
 WHAT CHANGED FROM SPRINT 1
 ───────────────────────────
@@ -13,6 +13,8 @@ shape validation is the goal here — not end-to-end integration.
 For live integration tests (TC-04, TC-05, TC-06, TC-10), see Rahul's
 integration test suite which runs against the real endpoints with credentials.
 """
+
+import json
 
 from fastapi.testclient import TestClient
 from unittest.mock import patch, MagicMock
@@ -242,3 +244,139 @@ def test_execute_query_demographics_sum_to_cohort_size():
     data = response.json()
     sex = data["demographics"]["sex"]
     assert sex["male"] + sex["female"] + sex["other"] == data["cohort_size"]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# /generate-protocol/stream
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _parse_sse_frames(raw: str) -> list[dict]:
+    """Parse a raw SSE response body into a list of {event, data} dicts.
+
+    Skips comment lines (keepalives) and blank frames.
+    """
+    frames = []
+    for block in raw.split("\n\n"):
+        block = block.strip()
+        if not block or block.startswith(":"):
+            continue
+        frame: dict = {}
+        for line in block.splitlines():
+            if line.startswith("event:"):
+                frame["event"] = line[len("event:"):].strip()
+            elif line.startswith("data:"):
+                raw_data = line[len("data:"):].strip()
+                try:
+                    frame["data"] = json.loads(raw_data)
+                except json.JSONDecodeError:
+                    frame["data"] = raw_data
+        if frame:
+            frames.append(frame)
+    return frames
+
+
+def test_stream_generate_protocol_http_plumbing():
+    """HTTP plumbing test: mock returns protocol directly (no on_progress calls).
+
+    Verifies that the stream endpoint:
+    - Returns 200 with text/event-stream content type
+    - Always emits a 'received' frame first
+    - Always emits a 'done' frame last
+    - The 'done' data contains the protocol shape (study_type, concept_sets)
+    """
+    mock_rwe = MagicMock()
+    mock_rwe.generate_protocol.return_value = _minimal_protocol()
+
+    with patch.object(app.state, "rwe", mock_rwe, create=True):
+        response = client.post(
+            "/generate-protocol/stream",
+            json={"question": "What is the incidence of CKD in T2D patients on metformin?"},
+        )
+
+    assert response.status_code == 200
+    assert "text/event-stream" in response.headers["content-type"]
+
+    frames = _parse_sse_frames(response.text)
+    events = [f["event"] for f in frames]
+
+    assert events[0] == "received"
+    assert events[-1] == "done"
+
+    done_data = frames[-1]["data"]
+    assert "study_type" in done_data
+    assert "concept_sets" in done_data
+    assert done_data["protocol_status"] == "needs_mapping"
+
+
+def test_stream_generate_protocol_event_sequence():
+    """Event sequence test: side_effect fires on_progress at every stage boundary.
+
+    Verifies that when the pipeline calls on_progress correctly, the stream
+    endpoint emits events in the expected order:
+    received → interpretation_attempt → interpretation_completed →
+    protocol_built → schema_validated → done
+    """
+    def _fake_generate_protocol(question, *, verify=None, on_progress=None):
+        if on_progress:
+            on_progress({"event": "interpretation_attempt", "model": "zai-org-glm-5", "attempt": 1, "max_attempts": 2})
+            on_progress({"event": "interpretation_completed"})
+            on_progress({"event": "protocol_built"})
+            on_progress({"event": "schema_validated"})
+        return _minimal_protocol()
+
+    mock_rwe = MagicMock()
+    mock_rwe.generate_protocol.side_effect = _fake_generate_protocol
+
+    with patch.object(app.state, "rwe", mock_rwe, create=True):
+        response = client.post(
+            "/generate-protocol/stream",
+            json={"question": "What is the incidence of CKD in T2D patients on metformin?"},
+        )
+
+    assert response.status_code == 200
+    frames = _parse_sse_frames(response.text)
+    events = [f["event"] for f in frames]
+
+    assert events[0] == "received"
+    assert "interpretation_attempt" in events
+    assert "interpretation_completed" in events
+    assert "protocol_built" in events
+    assert "schema_validated" in events
+    assert events[-1] == "done"
+
+    # interpretation_attempt carries model metadata
+    attempt_frame = next(f for f in frames if f["event"] == "interpretation_attempt")
+    assert attempt_frame["data"]["model"] == "zai-org-glm-5"
+    assert attempt_frame["data"]["attempt"] == 1
+    assert attempt_frame["data"]["max_attempts"] == 2
+
+
+def test_stream_generate_protocol_error_emits_error_event():
+    """When the pipeline raises PipelineStageError, the stream emits an error frame."""
+    from llm.api import PipelineStageError
+
+    mock_rwe = MagicMock()
+    mock_rwe.generate_protocol.side_effect = PipelineStageError(
+        "llm", "all_models_failed", "All models failed."
+    )
+
+    with patch.object(app.state, "rwe", mock_rwe, create=True):
+        response = client.post(
+            "/generate-protocol/stream",
+            json={"question": "What is the incidence of CKD in T2D patients on metformin?"},
+        )
+
+    assert response.status_code == 200
+    frames = _parse_sse_frames(response.text)
+    events = [f["event"] for f in frames]
+
+    assert "error" in events
+    error_frame = next(f for f in frames if f["event"] == "error")
+    assert error_frame["data"]["error_code"] == "ALL_MODELS_FAILED"
+    assert error_frame["data"]["recoverable"] is True
+
+
+def test_stream_generate_protocol_rejects_short_question():
+    """Pydantic validation (min_length=10) fires before the stream opens."""
+    response = client.post("/generate-protocol/stream", json={"question": "hi"})
+    assert response.status_code == 422
