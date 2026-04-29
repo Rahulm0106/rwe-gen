@@ -38,6 +38,8 @@ import logging
 from contextlib import asynccontextmanager
 from typing import Any
 
+import psycopg2
+from psycopg2 import pool as pg_pool
 from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -50,10 +52,7 @@ from schemas import (
     ValidatedConcept,
     ExecuteQueryRequest,
     ExecuteQueryResponse,
-    Demographics,
-    AgeGroupBreakdown,
-    SexBreakdown,
-    LabSummary,
+    CohortResult,
     ErrorResponse,
 )
 
@@ -182,9 +181,23 @@ async def lifespan(app: FastAPI):
         logger.error(f"Concept mapper init failed — {exc.stage}/{exc.kind}: {exc}")
         raise
 
+    # Postgres connection pool for /execute-query. Small pool — single backend
+    # process, queries are short-lived. Fails fast if the DB is unreachable
+    # rather than deferring the error to the first request.
+    try:
+        app.state.db_pool = pg_pool.SimpleConnectionPool(
+            minconn=1, maxconn=5, dsn=settings.database_url
+        )
+        logger.info("Postgres connection pool ready")
+    except psycopg2.Error as exc:
+        logger.error(f"Postgres pool init failed: {exc}")
+        raise
+
     yield
 
     logger.info("RWE-Gen API shutting down")
+    if getattr(app.state, "db_pool", None) is not None:
+        app.state.db_pool.closeall()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -236,6 +249,15 @@ _STAGE_KIND_STATUS: dict[tuple[str, str], tuple[int, bool]] = {
     ("athena", "remote_forced_unavailable"):             (503, False),
     ("athena", "imo_not_configured"):                    (503, False),
     ("athena", "schema_validation"):                     (422, True),
+    # SQL population stage (omop_sql_module.SqlPopulationError kinds)
+    ("sql", "protocol_not_executable"):                  (422, True),
+    ("sql", "protocol_not_ready"):                       (422, True),
+    ("sql", "unsupported_study_type"):                   (422, False),
+    ("sql", "unmapped_concept"):                         (422, True),
+    ("sql", "missing_concept_ref"):                      (422, True),
+    ("sql", "unsupported_event_type"):                   (422, False),
+    ("sql", "unsupported_criterion"):                    (422, False),
+    ("sql", "invalid_incidence_protocol"):               (422, True),
 }
 
 
@@ -305,7 +327,9 @@ async def generate_protocol(
     logger.info(f"generate_protocol — question: '{request.question[:80]}'")
 
     try:
-        protocol = http_request.app.state.rwe.generate_protocol(request.question)
+        protocol = http_request.app.state.rwe.generate_protocol(
+            request.question, verify=request.verify
+        )
     except PipelineStageError as exc:
         logger.error(f"generate_protocol — {exc.stage}/{exc.kind}: {exc}")
         return _stage_error_to_response(exc)
@@ -385,7 +409,18 @@ async def validate_concepts(
 
 # ─────────────────────────────────────────────────────────────────────────────
 # ENDPOINT 3 — POST /execute-query
-# Sprint 3: call rwe.populate_sql(protocol), then Laya's psycopg2 runner.
+#
+# Pipeline:
+#   1. rwe.populate_sql(protocol)   — Simon's OmopSqlTemplatePopulator builds
+#      a fully-inlined SQL string. Concept IDs are baked into the SQL text
+#      (see omop_sql_module._csv); SqlBuildResult.parameters is metadata only,
+#      not psycopg2 bind params. So we pass sql_result.sql to cur.execute()
+#      with no parameter tuple.
+#   2. Run against the OMOP Postgres via the lifespan-owned pool.
+#   3. Marshal each returned row into a CohortResult. Both templates share the
+#      first two columns (population_label, cohort_size); the rest are
+#      template-specific and the populator simply omits the ones that don't
+#      apply, so we map by column name from cursor.description.
 # ─────────────────────────────────────────────────────────────────────────────
 
 @app.post(
@@ -395,7 +430,10 @@ async def validate_concepts(
     tags=["pipeline"],
     summary="Step 3 — Execute validated OMOP query against PostgreSQL",
 )
-async def execute_query(request: ExecuteQueryRequest) -> ExecuteQueryResponse:
+async def execute_query(
+    http_request: Request,
+    request: ExecuteQueryRequest,
+) -> ExecuteQueryResponse:
     logger.info(
         f"execute_query — study_type={request.protocol.get('study_type')}, "
         f"concepts={len(request.validated_concepts)}"
@@ -418,25 +456,51 @@ async def execute_query(request: ExecuteQueryRequest) -> ExecuteQueryResponse:
             ).model_dump(),
         )
 
-    start_ms = time.time()
+    try:
+        sql_result = http_request.app.state.rwe.populate_sql(request.protocol)
+    except PipelineStageError as exc:
+        logger.error(f"execute_query — sql population: {exc.kind}: {exc}")
+        return _stage_error_to_response(exc)
 
-    # SPRINT 3 HOOK:
-    #   sql_result = app.state.rwe.populate_sql(request.protocol)
-    #   rows = await run_query(sql_result.sql, sql_result.parameters)
-    mock_demographics = Demographics(
-        age_groups=AgeGroupBreakdown(**{"18-30": 42, "31-45": 183, "46-60": 391, "61+": 231}),
-        sex=SexBreakdown(male=412, female=429, other=6),
+    logger.info(
+        f"execute_query — built SQL template={sql_result.template_name}, "
+        f"chars={len(sql_result.sql)}"
     )
-    mock_lab_summaries = [
-        LabSummary(lab_name="HbA1c", unit="%", count=724, mean=7.4, min=5.1, max=13.2)
-    ]
-    elapsed_ms = int((time.time() - start_ms) * 1000)
+
+    start_ms = time.time()
+    db_pool = http_request.app.state.db_pool
+    conn = db_pool.getconn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(sql_result.sql)
+            columns = [desc[0] for desc in cur.description]
+            raw_rows = cur.fetchall()
+        conn.commit()
+    except psycopg2.Error as exc:
+        conn.rollback()
+        logger.error(f"execute_query — psycopg2 error: {exc}")
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content=ErrorResponse(
+                error_code="DB_EXECUTION_FAILED",
+                message=str(exc),
+                recoverable=True,
+                stage="backend",
+                details={"template": sql_result.template_name},
+            ).model_dump(),
+        )
+    finally:
+        db_pool.putconn(conn)
+
+    elapsed_ms = max(int((time.time() - start_ms) * 1000), 1)
+
+    cohorts = [CohortResult(**dict(zip(columns, row))) for row in raw_rows]
+    logger.info(
+        f"execute_query — success, rows={len(cohorts)}, elapsed_ms={elapsed_ms}"
+    )
 
     return ExecuteQueryResponse(
-        cohort_size=847,
-        demographics=mock_demographics,
-        incidence_rate=12.3,
-        incidence_rate_unit="per 1000 person-years",
-        lab_summaries=mock_lab_summaries,
-        query_time_ms=max(elapsed_ms, 1),
+        template_name=sql_result.template_name,
+        cohorts=cohorts,
+        query_time_ms=elapsed_ms,
     )

@@ -32,6 +32,12 @@ class ProtocolRequest(BaseModel):
     """Step 1 — researcher types a plain-English clinical question."""
     question: str = Field(..., min_length=10,
                           description="Plain-English clinical research question")
+    verify: bool = Field(
+        default=False,
+        description="If true, run the optional semantic-verification LLM pass "
+                    "(slower, higher-fidelity). Overrides the server-side "
+                    "LLM_SEMANTIC_VERIFICATION_ENABLED default.",
+    )
 
 
 class ConceptValidationRequest(BaseModel):
@@ -185,44 +191,36 @@ class ConceptValidationResponse(BaseModel):
 
 # ─────────────────────────────────────────────────────────────────────────────
 # EXECUTE QUERY RESPONSE
-# Unchanged from Sprint 1.
+#
+# Shape mirrors what Simon's SQL templates actually return (omop_sql_module.py).
+# Both templates produce one row per cohort (target, plus comparator if enabled),
+# UNION ALL'd. Characterization fills the demographic columns; incidence fills
+# the event/person-time columns. The other side is NULL.
+#
+# Characterization columns:
+#   population_label, cohort_size, mean_age_at_index,
+#   male_count, female_count, unknown_sex_count
+#
+# Incidence columns:
+#   population_label, cohort_size, event_count,
+#   person_time_days, incidence_per_person_day
 # ─────────────────────────────────────────────────────────────────────────────
 
-class AgeGroupBreakdown(BaseModel):
-    age_18_30: int = Field(..., alias="18-30")
-    age_31_45: int = Field(..., alias="31-45")
-    age_46_60: int = Field(..., alias="46-60")
-    age_61_plus: int = Field(..., alias="61+")
-    model_config = {"populate_by_name": True}
-
-
-class SexBreakdown(BaseModel):
-    male: int
-    female: int
-    other: int
-
-
-class Demographics(BaseModel):
-    age_groups: AgeGroupBreakdown
-    sex: SexBreakdown
-
-
-class LabSummary(BaseModel):
-    lab_name: str
-    unit: str
-    count: int
-    mean: float
-    min: float
-    max: float
+class CohortResult(BaseModel):
+    population_label: str
+    cohort_size: int
+    mean_age_at_index: Optional[float] = None
+    male_count: Optional[int] = None
+    female_count: Optional[int] = None
+    unknown_sex_count: Optional[int] = None
+    event_count: Optional[int] = None
+    person_time_days: Optional[float] = None
+    incidence_per_person_day: Optional[float] = None
 
 
 class ExecuteQueryResponse(BaseModel):
-    """Results from PostgreSQL — every number here comes from the database."""
-    cohort_size: int
-    demographics: Demographics
-    incidence_rate: Optional[float] = None
-    incidence_rate_unit: Optional[str] = None
-    lab_summaries: Optional[list[LabSummary]] = None
+    template_name: str            # "cohort_characterization" | "incidence_analysis"
+    cohorts: list[CohortResult]   # 1 row (target only) or 2 rows (target + comparator)
     query_time_ms: int
 
 

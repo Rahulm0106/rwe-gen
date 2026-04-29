@@ -76,13 +76,15 @@ class ProtocolLLMGenerator:
                 VeniceModelConfig(name="zai-org-glm-5", retries=2),
                 VeniceModelConfig(name="kimi-k2-5", retries=2),
             ]
-        if self.config.semantic_verification_enabled and not self.config.verification_models:
+        if not self.config.verification_models:
             self.config.verification_models = [
                 VeniceModelConfig(name="kimi-k2-5", retries=2),
                 VeniceModelConfig(name="zai-org-glm-5", retries=1),
             ]
 
-    def generate_protocol(self, question: str) -> dict[str, Any]:
+    def generate_protocol(
+        self, question: str, *, verify: bool | None = None
+    ) -> dict[str, Any]:
         question = question.strip()
         if not question:
             raise LLMError(
@@ -106,7 +108,10 @@ class ProtocolLLMGenerator:
             protocol = self._apply_pre_mapping_defaults(protocol, question)
             self._validate_protocol(protocol)
 
-        if self.config.semantic_verification_enabled:
+        verify_enabled = (
+            verify if verify is not None else self.config.semantic_verification_enabled
+        )
+        if verify_enabled:
             if not api_key:
                 raise LLMError(
                     "Semantic verification was enabled but no Venice API key is available.",
