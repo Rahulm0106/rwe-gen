@@ -38,6 +38,7 @@ const EVENT_COLORS = {
 export default function QuestionInput() {
   const [question, setQuestion] = useState('')
   const [loading, setLoading] = useState(false)
+  const [quickMode, setQuickMode] = useState(true)
   const [events, setEvents] = useState([])
   const [elapsed, setElapsed] = useState(null)
   const [timerStart, setTimerStart] = useState(null)
@@ -61,6 +62,7 @@ export default function QuestionInput() {
 
     generateProtocolStream(
       question,
+      !quickMode,
       (event) => {
         setEvents(prev => [...prev, { ...event, timestamp: new Date().toLocaleTimeString() }])
         if (event.event === 'verification_call_started') {
@@ -109,7 +111,31 @@ export default function QuestionInput() {
             />
             <p className="text-xs text-slate-400 mt-1">{question.length} characters</p>
           </div>
-          <div className="bg-slate-50 border-t border-slate-100 px-6 py-4 flex justify-end">
+          <div className="bg-slate-50 border-t border-slate-100 px-6 py-4 flex justify-between items-center gap-4">
+            <div className="flex items-center gap-6">
+              <button
+                onClick={() => setQuickMode(true)}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-all ${quickMode ? 'bg-teal-600 text-white shadow-sm' : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'}`}
+              >
+                <span className="material-symbols-outlined text-sm">bolt</span>
+                Quick Mode
+              </button>
+              <button
+                onClick={() => {
+                  setQuickMode(false)
+                }}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-all ${!quickMode ? 'bg-slate-800 text-white shadow-sm' : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'}`}
+              >
+                <span className="material-symbols-outlined text-sm">rate_review</span>
+                Full Clinical Review
+              </button>
+              {!quickMode && (
+                <span className="text-xs text-slate-400 flex items-center gap-1">
+                  <span className="material-symbols-outlined text-xs">schedule</span>
+                  May take up to 20 minutes
+                </span>
+              )}
+            </div>
             <button
               onClick={handleSubmit}
               disabled={loading || !question.trim()}

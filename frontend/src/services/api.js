@@ -51,12 +51,12 @@ export function executeQuery(protocol, validatedConcepts) {
   }).then((r) => r.data)
 }
 
-export async function generateProtocolStream(question, onEvent, onDone, onError) {
+export async function generateProtocolStream(question, verify, onEvent, onDone, onError) {
   try {
     const response = await fetch('http://localhost:8000/generate-protocol/stream', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ question, verify: true }),
+      body: JSON.stringify({ question, verify }),
     })
 
     if (!response.ok) {

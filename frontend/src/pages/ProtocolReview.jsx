@@ -237,6 +237,41 @@ export default function ProtocolReview() {
                 <p className="text-sm text-slate-600 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 font-mono">{protocol?.execution?.sql_template || '—'}</p>
               </div>
 
+              {protocol?.issues?.warnings?.length > 0 && (
+                <div>
+                  <label className="block text-xs font-semibold text-slate-500 mb-2">
+                    AI Warnings <span className="text-slate-400 font-normal">(read-only)</span>
+                  </label>
+                  <div className="space-y-2">
+                    {protocol.issues.warnings.map((w, i) => (
+                      <div key={i} className="flex items-start gap-2 text-sm text-slate-600 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2">
+                        <span className="material-symbols-outlined text-amber-500 text-sm mt-0.5 shrink-0">warning</span>
+                        <div>
+                          <span className="font-semibold text-amber-700 text-xs uppercase tracking-wide">{w.code}: </span>
+                          <span>{w.message}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {protocol?.assumptions?.length > 0 && (
+                <div>
+                  <label className="block text-xs font-semibold text-slate-500 mb-2">
+                    AI Assumptions <span className="text-slate-400 font-normal">(read-only)</span>
+                  </label>
+                  <div className="space-y-2">
+                    {protocol.assumptions.map((a, i) => (
+                      <div key={i} className="flex items-start gap-2 text-sm text-slate-600 bg-blue-50 border border-blue-100 rounded-lg px-3 py-2">
+                        <span className="material-symbols-outlined text-blue-500 text-sm mt-0.5 shrink-0">info</span>
+                        <span>{a}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
             </div>
             {parseError && (
               <p className="text-red-600 text-xs mt-3 flex items-center gap-1">
