@@ -50,3 +50,63 @@ export function executeQuery(protocol, validatedConcepts) {
     validated_concepts: validatedConcepts
   }).then((r) => r.data)
 }
+
+export async function generateProtocolStream(question, onEvent, onDone, onError) {
+  try {
+    const response = await fetch('http://localhost:8000/generate-protocol/stream', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ question, verify: true }),
+    })
+
+    if (!response.ok) {
+      const err = await response.json()
+      onError(err.message || 'Request failed')
+      return
+    }
+
+    const reader = response.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+
+      buffer += decoder.decode(value, { stream: true })
+      const lines = buffer.split('\n')
+      buffer = lines.pop()
+
+      let eventName = ''
+      let dataLine = ''
+
+      for (const line of lines) {
+        if (line.startsWith('event:')) {
+          eventName = line.replace('event:', '').trim()
+        } else if (line.startsWith('data:')) {
+          dataLine = line.replace('data:', '').trim()
+        } else if (line === '' && eventName && dataLine) {
+          if (eventName === ':keepalive') {
+            eventName = ''
+            dataLine = ''
+            continue
+          }
+          try {
+            const payload = JSON.parse(dataLine)
+            if (eventName === 'done') {
+              onDone(payload)
+            } else if (eventName === 'error') {
+              onError(payload.message || 'Pipeline error')
+            } else {
+              onEvent({ event: eventName, ...payload })
+            }
+          } catch {}
+          eventName = ''
+          dataLine = ''
+        }
+      }
+    }
+  } catch (err) {
+    onError(err.message || 'Connection failed')
+  }
+}
