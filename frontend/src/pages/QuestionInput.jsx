@@ -132,7 +132,7 @@ export default function QuestionInput() {
               {!quickMode && (
                 <span className="text-xs text-slate-400 flex items-center gap-1">
                   <span className="material-symbols-outlined text-xs">schedule</span>
-                  May take up to 20 minutes
+                  This may take a while
                 </span>
               )}
             </div>
