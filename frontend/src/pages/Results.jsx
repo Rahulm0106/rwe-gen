@@ -125,7 +125,7 @@ export default function Results() {
                 <span className="text-xs font-bold uppercase tracking-widest text-slate-400">Mean Age</span>
                 <span className="material-symbols-outlined text-teal-600">calendar_today</span>
               </div>
-              <div className="text-3xl font-bold text-slate-900">{cohort.mean_age_at_index ?? '—'}</div>
+              <div className="text-3xl font-bold text-slate-900">{cohort.mean_age_at_index != null ? Number(cohort.mean_age_at_index).toFixed(2) : '—'}</div>
               <div className="text-slate-400 text-xs mt-2">years at index date</div>
             </div>
             <div className="bg-white p-6 border border-slate-200 rounded-xl shadow-sm">
@@ -215,7 +215,7 @@ export default function Results() {
                 <td className="px-6 py-4 font-medium text-slate-700 capitalize">{c.population_label || 'Target Cohort'}</td>
                 <td className="px-6 py-4 text-slate-600">{c.cohort_size?.toLocaleString() ?? '—'}</td>
                 {isCharacterization && <>
-                  <td className="px-6 py-4 text-slate-600">{c.mean_age_at_index ?? '—'}</td>
+                  <td className="px-6 py-4 text-slate-600">{c.mean_age_at_index != null ? Number(c.mean_age_at_index).toFixed(2) : '—'}</td>
                   <td className="px-6 py-4 text-slate-600">{c.female_count?.toLocaleString() ?? '—'}</td>
                   <td className="px-6 py-4 text-slate-600">{c.male_count?.toLocaleString() ?? '—'}</td>
                 </>}

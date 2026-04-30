@@ -132,12 +132,6 @@ export default function Concepts() {
                   ))}
                 </tbody>
               </table>
-              <div className="p-4 bg-slate-50 border-t border-slate-100">
-                <button className="w-full py-2 bg-white border border-slate-200 text-slate-600 text-sm font-semibold rounded-lg hover:shadow-sm transition-all flex items-center justify-center gap-2">
-                  <span className="material-symbols-outlined text-sm">search_check</span>
-                  Auto-resolve Mappings
-                </button>
-              </div>
             </>
           )}
         </div>

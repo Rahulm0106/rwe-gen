@@ -39,10 +39,10 @@ export default function QuestionInput() {
   const [question, setQuestion] = useState('')
   const [loading, setLoading] = useState(false)
   const [quickMode, setQuickMode] = useState(true)
-  const [events, setEvents] = useState([])
   const [elapsed, setElapsed] = useState(null)
   const [timerStart, setTimerStart] = useState(null)
-  const { setProtocol, setAppError } = useApp()
+  const { setProtocol, setAppError, pipelineEvents, setPipelineEvents } = useApp()
+  const [events, setEvents] = useState(pipelineEvents)
   const navigate = useNavigate()
 
   useEffect(() => {
@@ -57,6 +57,7 @@ export default function QuestionInput() {
     if (!question.trim() || loading) return
     setLoading(true)
     setEvents([])
+    setPipelineEvents([])
     setElapsed(null)
     setTimerStart(null)
 
@@ -65,6 +66,7 @@ export default function QuestionInput() {
       !quickMode,
       (event) => {
         setEvents(prev => [...prev, { ...event, timestamp: new Date().toLocaleTimeString() }])
+        setPipelineEvents(prev => [...prev, { ...event, timestamp: new Date().toLocaleTimeString() }])
         if (event.event === 'verification_call_started') {
           setTimerStart(Date.now())
         }
@@ -130,7 +132,7 @@ export default function QuestionInput() {
                 Full Clinical Review
               </button>
               {!quickMode && (
-                <span className="text-xs text-slate-400 flex items-center gap-1">
+                <span className="text-xs text-rose-500 flex items-center gap-1">
                   <span className="material-symbols-outlined text-xs">schedule</span>
                   This may take a while
                 </span>
