@@ -7,6 +7,7 @@ export function AppProvider({ children }) {
   const [validatedConcepts, setValidatedConcepts] = useState(null)
   const [results, setResults] = useState(null)
   const [appError, setAppError] = useState(null)
+  const [pipelineEvents, setPipelineEvents] = useState([])
 
   return (
     <AppContext.Provider value={{
@@ -14,6 +15,7 @@ export function AppProvider({ children }) {
       validatedConcepts, setValidatedConcepts,
       results, setResults,
       appError, setAppError,
+      pipelineEvents, setPipelineEvents,
     }}>
       {children}
     </AppContext.Provider>

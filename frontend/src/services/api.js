@@ -52,6 +52,51 @@ export function executeQuery(protocol, validatedConcepts) {
 }
 
 export async function generateProtocolStream(question, verify, onEvent, onDone, onError) {
+  if (USE_MOCK) {
+    const mockEvents = [
+      { event: 'received', message: 'Connected to pipeline' },
+      { event: 'interpretation_attempt', model: 'zai-org-glm-5', attempt: 1, max_attempts: 2, message: 'Interpreting question with zai-org-glm-5 (attempt 1/2)' },
+      { event: 'interpretation_completed', message: 'Interpretation parsed and validated' },
+      { event: 'protocol_built', message: 'Built draft protocol from interpretation' },
+      { event: 'schema_validated', message: 'Draft protocol passes schema validation' },
+    ]
+    let i = 0
+    const interval = setInterval(() => {
+      if (i < mockEvents.length) {
+        onEvent(mockEvents[i])
+        i++
+      } else {
+        clearInterval(interval)
+        onDone({
+          study_type: 'cohort_characterization',
+          cohort_definition: {
+            condition: 'Type 2 diabetes mellitus',
+            drug: null,
+            observation_window: { start_date: '2020-01-01', end_date: '2023-12-31' }
+          },
+          target_cohort: {
+            label: 'Adults with type 2 diabetes treated with metformin in the last 5 years',
+            demographic_filters: { age: { min: 18, max: null }, sex: ['male', 'female', 'unknown'] }
+          },
+          comparator: { enabled: false, label: null },
+          outcome: { required: false, label: null },
+          time_windows: { calendar_window: { start_date: '2020-01-01', end_date: '2023-12-31' } },
+          normalized_question: 'Characterize adults aged 18 or older with type 2 diabetes treated with metformin.',
+          original_question: question,
+          execution: { sql_template: 'cohort_characterization', ready_for_execution: false },
+          concept_sets: [
+            { concept_ref: 'concept_1', raw_text: 'type 2 diabetes', domain: 'condition', mapping: { status: 'unmapped' } },
+            { concept_ref: 'concept_2', raw_text: 'metformin', domain: 'drug', mapping: { status: 'unmapped' } }
+          ],
+          protocol_status: 'needs_mapping',
+          issues: { warnings: [], blocking_errors: [] },
+          assumptions: []
+        })
+      }
+    }, 600)
+    return
+  }
+
   try {
     const response = await fetch('http://localhost:8000/generate-protocol/stream', {
       method: 'POST',
