@@ -4,7 +4,7 @@ import { generateProtocolStream } from '../services/api'
 import { useApp } from '../context/AppContext'
 
 const EVENT_ICONS = {
-  received: 'wifi',
+  received: 'connect_without_contact',
   interpretation_attempt: 'psychology',
   interpretation_completed: 'check_circle',
   protocol_built: 'article',
