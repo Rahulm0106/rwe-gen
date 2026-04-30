@@ -40,22 +40,55 @@ export default function Results() {
 
   if (loading) {
     return (
-      <div className="max-w-2xl mx-auto text-center py-20">
-        <div className="w-12 h-12 border-4 border-slate-200 border-t-teal-600 rounded-full animate-spin mx-auto"></div>
-        <h2 className="text-xl font-semibold text-slate-700 mt-6">Running Query Against Database...</h2>
-        <p className="text-slate-500 mt-2">Executing SQL templates against OMOP CDM</p>
-        <div className="mt-6 space-y-2 text-sm text-slate-400">
-          <p className="flex items-center justify-center gap-2"><span className="material-symbols-outlined text-teal-500 text-sm">check_circle</span> Protocol validated</p>
-          <p className="flex items-center justify-center gap-2"><span className="material-symbols-outlined text-teal-500 text-sm">check_circle</span> Concepts mapped</p>
-          <p className="flex items-center justify-center gap-2"><span className="w-4 h-4 border-2 border-slate-300 border-t-teal-500 rounded-full animate-spin inline-block"></span> Querying PostgreSQL...</p>
+      <div className="max-w-6xl mx-auto space-y-8">
+        <div className="flex justify-between items-end">
+          <div>
+            <h2 className="text-3xl font-bold text-slate-900">Study Results Dashboard</h2>
+            <p className="text-slate-500 mt-1">Running query against OMOP database...</p>
+          </div>
+        </div>
+        {/* Query Execution Status */}
+        <div className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm">
+          <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-4">Query Execution Status</p>
+          <div className="space-y-3">
+            {[
+              { layer: 'API Gateway', label: 'FastAPI received request at /execute-query', done: true },
+              { layer: 'Protocol', label: 'Validated protocol loaded — ready_for_execution: true', done: true },
+              { layer: 'SQL Engine', label: 'Selecting template: ' + (protocol?.execution?.sql_template || 'cohort_characterization'), done: false, active: true },
+              { layer: 'PostgreSQL', label: 'Executing parameterized SQL against OMOP CDM v5.4', done: false },
+              { layer: 'Aggregator', label: 'Computing demographics, age groups, incidence rates', done: false },
+            ].map((step, i) => (
+              <div key={i} className="flex items-center gap-3">
+                <div className="w-24 shrink-0">
+                  <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 bg-slate-100 text-slate-500 rounded">{step.layer}</span>
+                </div>
+                {step.done ? (
+                  <span className="material-symbols-outlined text-emerald-500 text-lg shrink-0" style={{fontVariationSettings: "'FILL' 1"}}>check_circle</span>
+                ) : step.active ? (
+                  <div className="w-5 h-5 border-2 border-teal-500 border-t-transparent rounded-full animate-spin shrink-0"></div>
+                ) : (
+                  <div className="w-5 h-5 rounded-full border-2 border-slate-200 shrink-0"></div>
+                )}
+                <span className={`text-sm ${step.done ? 'text-emerald-600' : step.active ? 'text-slate-900 font-semibold' : 'text-slate-400'}`}>
+                  {step.label}
+                </span>
+              </div>
+            ))}
+          </div>
         </div>
       </div>
     )
   }
 
-  const ageGroups = Object.entries(data.demographics?.age_groups || {})
-  const sexGroups = Object.entries(data.demographics?.sex || {})
-  const total = data.cohort_size || 1
+  // Parse the real response
+  const templateName = data?.template_name || 'cohort_characterization'
+  const cohort = data?.cohorts?.[0] || {}
+  const queryTimeMs = data?.query_time_ms || 0
+
+  // Build display metrics based on template
+  const isCharacterization = templateName === 'cohort_characterization'
+  const isIncidence = templateName === 'incidence_analysis'
+  const isLabValue = templateName === 'lab_value_summary'
 
   return (
     <div className="max-w-6xl mx-auto space-y-8">
@@ -63,7 +96,7 @@ export default function Results() {
       <div className="flex justify-between items-end">
         <div>
           <h2 className="text-3xl font-bold text-slate-900">Study Results Dashboard</h2>
-          <p className="text-slate-500 mt-1">Primary Cohort Analysis: {protocol.cohort_definition?.condition}</p>
+          <p className="text-slate-500 mt-1">Primary Cohort Analysis: {protocol?.target_cohort?.label || protocol?.cohort_definition?.condition}</p>
         </div>
         <button onClick={handleStartOver} className="flex items-center gap-2 px-4 py-2 border border-slate-300 bg-white text-slate-700 font-semibold rounded-lg hover:bg-slate-50 transition-colors shadow-sm text-sm">
           <span className="material-symbols-outlined text-sm">add</span>
@@ -75,118 +108,132 @@ export default function Results() {
       <div className="grid grid-cols-4 gap-6">
         <div className="bg-white p-6 border border-slate-200 rounded-xl shadow-sm">
           <div className="flex justify-between items-start mb-2">
-            <span className="text-xs font-bold uppercase tracking-widest text-slate-400">Total Cohort Size</span>
+            <span className="text-xs font-bold uppercase tracking-widest text-slate-400">Cohort Size</span>
             <span className="material-symbols-outlined text-teal-600">groups</span>
           </div>
-          <div className="text-3xl font-bold text-slate-900">{data.cohort_size?.toLocaleString()}</div>
+          <div className="text-3xl font-bold text-slate-900">{cohort.cohort_size?.toLocaleString() ?? '—'}</div>
           <div className="flex items-center gap-1 mt-2 text-emerald-600 text-xs font-bold">
             <span className="material-symbols-outlined text-xs">check_circle</span>
             From PostgreSQL
           </div>
         </div>
-        <div className="bg-white p-6 border border-slate-200 rounded-xl shadow-sm">
-          <div className="flex justify-between items-start mb-2">
-            <span className="text-xs font-bold uppercase tracking-widest text-slate-400">Incidence Rate</span>
-            <span className="material-symbols-outlined text-teal-600">monitoring</span>
-          </div>
-          <div className="text-3xl font-bold text-slate-900">
-            {data.incidence_rate != null ? data.incidence_rate : 'N/A'}
-          </div>
-          <div className="text-slate-400 text-xs mt-2">{data.incidence_rate_unit || '—'}</div>
-        </div>
-        <div className="bg-white p-6 border border-slate-200 rounded-xl shadow-sm">
-          <div className="flex justify-between items-start mb-2">
-            <span className="text-xs font-bold uppercase tracking-widest text-slate-400">Study Type</span>
-            <span className="material-symbols-outlined text-teal-600">science</span>
-          </div>
-          <div className="text-lg font-bold text-slate-900 capitalize">{protocol.study_type?.replace('_', ' ')}</div>
-          <div className="text-slate-400 text-xs mt-2">OMOP CDM V5.4</div>
-        </div>
+
+        {isCharacterization && (
+          <>
+            <div className="bg-white p-6 border border-slate-200 rounded-xl shadow-sm">
+              <div className="flex justify-between items-start mb-2">
+                <span className="text-xs font-bold uppercase tracking-widest text-slate-400">Mean Age</span>
+                <span className="material-symbols-outlined text-teal-600">calendar_today</span>
+              </div>
+              <div className="text-3xl font-bold text-slate-900">{cohort.mean_age_at_index ?? '—'}</div>
+              <div className="text-slate-400 text-xs mt-2">years at index date</div>
+            </div>
+            <div className="bg-white p-6 border border-slate-200 rounded-xl shadow-sm">
+              <div className="flex justify-between items-start mb-2">
+                <span className="text-xs font-bold uppercase tracking-widest text-slate-400">Female</span>
+                <span className="material-symbols-outlined text-teal-600">person</span>
+              </div>
+              <div className="text-3xl font-bold text-slate-900">{cohort.female_count?.toLocaleString() ?? '—'}</div>
+              <div className="text-slate-400 text-xs mt-2">patients</div>
+            </div>
+            <div className="bg-white p-6 border border-slate-200 rounded-xl shadow-sm">
+              <div className="flex justify-between items-start mb-2">
+                <span className="text-xs font-bold uppercase tracking-widest text-slate-400">Male</span>
+                <span className="material-symbols-outlined text-teal-600">person</span>
+              </div>
+              <div className="text-3xl font-bold text-slate-900">{cohort.male_count?.toLocaleString() ?? '—'}</div>
+              <div className="text-slate-400 text-xs mt-2">patients</div>
+            </div>
+          </>
+        )}
+
+        {isIncidence && (
+          <>
+            <div className="bg-white p-6 border border-slate-200 rounded-xl shadow-sm">
+              <div className="flex justify-between items-start mb-2">
+                <span className="text-xs font-bold uppercase tracking-widest text-slate-400">Event Count</span>
+                <span className="material-symbols-outlined text-teal-600">monitoring</span>
+              </div>
+              <div className="text-3xl font-bold text-slate-900">{cohort.event_count?.toLocaleString() ?? '—'}</div>
+              <div className="text-slate-400 text-xs mt-2">events observed</div>
+            </div>
+            <div className="bg-white p-6 border border-slate-200 rounded-xl shadow-sm">
+              <div className="flex justify-between items-start mb-2">
+                <span className="text-xs font-bold uppercase tracking-widest text-slate-400">Incidence Rate</span>
+                <span className="material-symbols-outlined text-teal-600">analytics</span>
+              </div>
+              <div className="text-3xl font-bold text-slate-900">
+                {cohort.incidence_per_person_day != null
+                  ? (cohort.incidence_per_person_day * 1000).toFixed(2)
+                  : '—'}
+              </div>
+              <div className="text-slate-400 text-xs mt-2">per 1000 person-days</div>
+            </div>
+            <div className="bg-white p-6 border border-slate-200 rounded-xl shadow-sm">
+              <div className="flex justify-between items-start mb-2">
+                <span className="text-xs font-bold uppercase tracking-widest text-slate-400">Person Time</span>
+                <span className="material-symbols-outlined text-teal-600">timer</span>
+              </div>
+              <div className="text-3xl font-bold text-slate-900">
+                {cohort.person_time_days != null
+                  ? Math.round(cohort.person_time_days / 365).toLocaleString()
+                  : '—'}
+              </div>
+              <div className="text-slate-400 text-xs mt-2">person-years</div>
+            </div>
+          </>
+        )}
+
         <div className="bg-white p-6 border border-slate-200 rounded-xl shadow-sm">
           <div className="flex justify-between items-start mb-2">
             <span className="text-xs font-bold uppercase tracking-widest text-slate-400">Query Time</span>
             <span className="material-symbols-outlined text-teal-600">timer</span>
           </div>
-          <div className="text-3xl font-bold text-slate-900">{data.query_time_ms}</div>
+          <div className="text-3xl font-bold text-slate-900">{queryTimeMs}</div>
           <div className="text-slate-400 text-xs mt-2">milliseconds</div>
         </div>
       </div>
 
-      {/* Demographics table + incidence */}
-      <div className="grid grid-cols-12 gap-6">
-        <div className="col-span-7 bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm">
-          <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center">
-            <h3 className="font-semibold text-slate-900">Demographics Baseline</h3>
-            <span className="text-xs text-slate-400">* All figures from PostgreSQL</span>
-          </div>
-          <table className="w-full text-left">
-            <thead>
-              <tr className="bg-slate-50 text-slate-500 border-b border-slate-200 text-xs font-semibold uppercase tracking-wider">
-                <th className="px-6 py-3">Characteristic</th>
-                <th className="px-6 py-3">Count</th>
-                <th className="px-6 py-3">Percentage</th>
+      {/* Cohort details table */}
+      <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
+        <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center">
+          <h3 className="font-semibold text-slate-900">Cohort Results</h3>
+          <span className="text-xs text-slate-400">* All figures sourced directly from PostgreSQL</span>
+        </div>
+        <table className="w-full text-left">
+          <thead>
+            <tr className="bg-slate-50 text-slate-500 border-b border-slate-200 text-xs font-semibold uppercase tracking-wider">
+              <th className="px-6 py-3">Cohort</th>
+              <th className="px-6 py-3">Size</th>
+              {isCharacterization && <><th className="px-6 py-3">Mean Age</th><th className="px-6 py-3">Female</th><th className="px-6 py-3">Male</th></>}
+              {isIncidence && <><th className="px-6 py-3">Events</th><th className="px-6 py-3">Person-Years</th><th className="px-6 py-3">Rate/1000 p-d</th></>}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100 text-sm">
+            {(data?.cohorts || []).map((c, i) => (
+              <tr key={i} className="hover:bg-slate-50 transition-colors">
+                <td className="px-6 py-4 font-medium text-slate-700 capitalize">{c.population_label || 'Target Cohort'}</td>
+                <td className="px-6 py-4 text-slate-600">{c.cohort_size?.toLocaleString() ?? '—'}</td>
+                {isCharacterization && <>
+                  <td className="px-6 py-4 text-slate-600">{c.mean_age_at_index ?? '—'}</td>
+                  <td className="px-6 py-4 text-slate-600">{c.female_count?.toLocaleString() ?? '—'}</td>
+                  <td className="px-6 py-4 text-slate-600">{c.male_count?.toLocaleString() ?? '—'}</td>
+                </>}
+                {isIncidence && <>
+                  <td className="px-6 py-4 text-slate-600">{c.event_count?.toLocaleString() ?? '—'}</td>
+                  <td className="px-6 py-4 text-slate-600">{c.person_time_days != null ? Math.round(c.person_time_days / 365).toLocaleString() : '—'}</td>
+                  <td className="px-6 py-4 text-slate-600">{c.incidence_per_person_day != null ? (c.incidence_per_person_day * 1000).toFixed(4) : '—'}</td>
+                </>}
               </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100 text-sm">
-              {ageGroups.map(([group, count]) => (
-                <tr key={group} className="hover:bg-slate-50 transition-colors">
-                  <td className="px-6 py-3 text-slate-700 font-medium">Age {group}</td>
-                  <td className="px-6 py-3 text-slate-600">{count?.toLocaleString()}</td>
-                  <td className="px-6 py-3">
-                    <div className="flex items-center gap-3">
-                      <span className="w-8 text-slate-600">{Math.round((count / total) * 100)}%</span>
-                      <div className="flex-1 h-1.5 bg-slate-100 rounded-full">
-                        <div className="bg-teal-500 h-1.5 rounded-full" style={{ width: `${Math.round((count / total) * 100)}%` }}></div>
-                      </div>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-              {sexGroups.map(([group, count]) => (
-                <tr key={group} className="hover:bg-slate-50 transition-colors">
-                  <td className="px-6 py-3 text-slate-700 font-medium capitalize">Gender: {group}</td>
-                  <td className="px-6 py-3 text-slate-600">{count?.toLocaleString()}</td>
-                  <td className="px-6 py-3">
-                    <div className="flex items-center gap-3">
-                      <span className="w-8 text-slate-600">{Math.round((count / total) * 100)}%</span>
-                      <div className="flex-1 h-1.5 bg-slate-100 rounded-full">
-                        <div className="bg-teal-600 h-1.5 rounded-full" style={{ width: `${Math.round((count / total) * 100)}%` }}></div>
-                      </div>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+            ))}
+          </tbody>
+        </table>
+      </div>
 
-        {/* Right stats */}
-        <div className="col-span-5 flex flex-col gap-6">
-          <div className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm flex-1">
-            <h3 className="font-semibold text-slate-900 mb-4">Cohort Breakdown</h3>
-            <div className="space-y-3">
-              {ageGroups.map(([group, count]) => (
-                <div key={group} className="flex items-center justify-between">
-                  <span className="text-sm text-slate-600">Age {group}</span>
-                  <div className="flex items-center gap-2">
-                    <div className="w-24 h-1.5 bg-slate-100 rounded-full">
-                      <div className="bg-teal-500 h-1.5 rounded-full" style={{ width: `${Math.round((count / total) * 100)}%` }}></div>
-                    </div>
-                    <span className="text-xs font-bold text-slate-500 w-8">{Math.round((count / total) * 100)}%</span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-          {/* Golden rule note */}
-          <div className="bg-slate-900 rounded-xl p-4 text-white">
-            <div className="flex items-center gap-2 mb-2">
-              <span className="material-symbols-outlined text-teal-400 text-sm">verified</span>
-              <span className="text-xs font-bold uppercase tracking-widest text-teal-300">Golden Rule</span>
-            </div>
-            <p className="text-xs text-slate-400 leading-relaxed">Zero LLM-estimated numbers. Every value shown is traceable to a PostgreSQL query result.</p>
-          </div>
-        </div>
+      {/* Golden rule */}
+      <div className="bg-slate-900 rounded-xl p-4 text-white flex items-center gap-3">
+        <span className="material-symbols-outlined text-teal-400 text-sm">verified</span>
+        <p className="text-xs text-slate-400">Zero LLM-estimated numbers. Every value shown is traceable to a PostgreSQL query result against OMOP CDM v5.4.</p>
       </div>
     </div>
   )

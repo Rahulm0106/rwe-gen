@@ -1,27 +1,89 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { generateProtocol } from '../services/api'
+import { generateProtocolStream } from '../services/api'
 import { useApp } from '../context/AppContext'
+
+const EVENT_ICONS = {
+  received: 'connect_without_contact',
+  interpretation_attempt: 'psychology',
+  interpretation_completed: 'check_circle',
+  protocol_built: 'article',
+  schema_validated: 'verified',
+  verification_started: 'rate_review',
+  verification_attempt: 'model_training',
+  verification_call_started: 'timer',
+  verification_call_completed: 'task_alt',
+  verification_parsing: 'data_object',
+  verification_validating: 'fact_check',
+  verification_reasoning_recovery: 'auto_fix_high',
+  verification_formatter_started: 'format_shapes',
+  verification_repair: 'build',
+  verification_model_fallback: 'swap_horiz',
+  verification_succeeded: 'check_circle',
+  verification_completed: 'done_all',
+  error: 'error',
+}
+
+const EVENT_COLORS = {
+  interpretation_completed: 'text-emerald-600',
+  protocol_built: 'text-emerald-600',
+  schema_validated: 'text-emerald-600',
+  verification_succeeded: 'text-emerald-600',
+  verification_completed: 'text-emerald-600',
+  verification_repair: 'text-amber-600',
+  verification_model_fallback: 'text-amber-600',
+  error: 'text-rose-600',
+}
 
 export default function QuestionInput() {
   const [question, setQuestion] = useState('')
   const [loading, setLoading] = useState(false)
+  const [quickMode, setQuickMode] = useState(true)
+  const [events, setEvents] = useState([])
+  const [elapsed, setElapsed] = useState(null)
+  const [timerStart, setTimerStart] = useState(null)
   const { setProtocol, setAppError } = useApp()
   const navigate = useNavigate()
 
-  async function handleSubmit() {
+  useEffect(() => {
+    if (!timerStart) return
+    const interval = setInterval(() => {
+      setElapsed(Math.floor((Date.now() - timerStart) / 1000))
+    }, 1000)
+    return () => clearInterval(interval)
+  }, [timerStart])
+
+  function handleSubmit() {
     if (!question.trim() || loading) return
     setLoading(true)
-    try {
-      const data = await generateProtocol(question)
-      setProtocol(data)
-      navigate('/protocol')
-    } catch (err) {
-      setAppError(err.message)
-      navigate('/error')
-    } finally {
-      setLoading(false)
-    }
+    setEvents([])
+    setElapsed(null)
+    setTimerStart(null)
+
+    generateProtocolStream(
+      question,
+      !quickMode,
+      (event) => {
+        setEvents(prev => [...prev, { ...event, timestamp: new Date().toLocaleTimeString() }])
+        if (event.event === 'verification_call_started') {
+          setTimerStart(Date.now())
+        }
+        if (event.event === 'verification_call_completed') {
+          setTimerStart(null)
+          setElapsed(null)
+        }
+      },
+      (protocol) => {
+        setProtocol(protocol)
+        setLoading(false)
+        navigate('/protocol')
+      },
+      (errMsg) => {
+        setAppError(errMsg)
+        setLoading(false)
+        navigate('/error')
+      }
+    )
   }
 
   return (
@@ -44,11 +106,36 @@ export default function QuestionInput() {
               onChange={(e) => setQuestion(e.target.value)}
               placeholder="Enter your clinical question in plain English..."
               rows={6}
-              className="w-full border-none focus:ring-0 text-xl text-slate-800 placeholder-slate-300 resize-none outline-none font-light"
+              disabled={loading}
+              className="w-full border-none focus:ring-0 text-xl text-slate-800 placeholder-slate-300 resize-none outline-none font-light disabled:opacity-50"
             />
             <p className="text-xs text-slate-400 mt-1">{question.length} characters</p>
           </div>
-          <div className="bg-slate-50 border-t border-slate-100 px-6 py-4 flex justify-end items-center">
+          <div className="bg-slate-50 border-t border-slate-100 px-6 py-4 flex justify-between items-center gap-4">
+            <div className="flex items-center gap-6">
+              <button
+                onClick={() => setQuickMode(true)}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-all ${quickMode ? 'bg-teal-600 text-white shadow-sm' : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'}`}
+              >
+                <span className="material-symbols-outlined text-sm">bolt</span>
+                Quick Mode
+              </button>
+              <button
+                onClick={() => {
+                  setQuickMode(false)
+                }}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-all ${!quickMode ? 'bg-slate-800 text-white shadow-sm' : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'}`}
+              >
+                <span className="material-symbols-outlined text-sm">rate_review</span>
+                Full Clinical Review
+              </button>
+              {!quickMode && (
+                <span className="text-xs text-slate-400 flex items-center gap-1">
+                  <span className="material-symbols-outlined text-xs">schedule</span>
+                  This may take a while
+                </span>
+              )}
+            </div>
             <button
               onClick={handleSubmit}
               disabled={loading || !question.trim()}
@@ -69,6 +156,45 @@ export default function QuestionInput() {
           </div>
         </div>
       </div>
+
+      {/* Live SSE Event Timeline */}
+      {events.length > 0 && (
+        <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
+          <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center">
+            <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Pipeline Status</p>
+            {elapsed !== null && (
+              <span className="text-xs text-teal-600 font-mono animate-pulse">{elapsed}s elapsed</span>
+            )}
+          </div>
+          <div className="p-4 space-y-2 max-h-80 overflow-y-auto">
+            {events.map((ev, i) => (
+              <div key={i} className="flex items-start gap-3">
+                <span
+                  className={`material-symbols-outlined text-sm mt-0.5 shrink-0 ${EVENT_COLORS[ev.event] || 'text-slate-400'}`}
+                  style={{ fontVariationSettings: "'FILL' 1" }}
+                >
+                  {EVENT_ICONS[ev.event] || 'radio_button_unchecked'}
+                </span>
+                <div className="flex-1 min-w-0">
+                  <p className={`text-sm ${EVENT_COLORS[ev.event] || 'text-slate-700'}`}>
+                    {ev.message}
+                  </p>
+                  {ev.model && (
+                    <span className="text-[10px] font-mono text-slate-400">{ev.model}{ev.attempt ? ` (attempt ${ev.attempt}/${ev.max_attempts})` : ''}</span>
+                  )}
+                </div>
+                <span className="text-[10px] text-slate-400 shrink-0">{ev.timestamp}</span>
+              </div>
+            ))}
+            {loading && (
+              <div className="flex items-center gap-2 text-slate-400 text-sm">
+                <div className="w-3 h-3 border-2 border-teal-500 border-t-transparent rounded-full animate-spin"></div>
+                <span>Processing...</span>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Info banner */}
       <div className="grid grid-cols-12 gap-4">

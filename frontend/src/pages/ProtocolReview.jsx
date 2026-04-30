@@ -5,7 +5,6 @@ import { useApp } from '../context/AppContext'
 export default function ProtocolReview() {
   const { protocol, setProtocol } = useApp()
   const navigate = useNavigate()
-  const [draft, setDraft] = useState(protocol ? JSON.stringify(protocol, null, 2) : '')
   const [parseError, setParseError] = useState(null)
 
   if (!protocol) {
@@ -19,21 +18,6 @@ export default function ProtocolReview() {
         </button>
       </div>
     )
-  }
-
-  function handleApprove() {
-    try {
-      const parsed = JSON.parse(draft)
-      const updated = {
-        ...parsed,
-        study_type: editableFields.study_type,
-        original_question: editableFields.original_question,
-      }
-      setProtocol(updated)
-      navigate('/concepts')
-    } catch {
-      setParseError('Invalid JSON — please fix before continuing.')
-    }
   }
 
   function safeStr(val) {
@@ -50,21 +34,29 @@ export default function ProtocolReview() {
   }
 
   const targetCohort = protocol.target_cohort || protocol.cohort_definition
-  const obsWindow = targetCohort?.observation_window || protocol.observation_window
+  const obsWindow = targetCohort?.observation_window || protocol.observation_window || protocol.time_windows?.calendar_window
   const outcome = protocol.outcome_cohort || protocol.outcome
 
   const [editableFields, setEditableFields] = useState({
     study_type: safeStr(protocol.study_type),
     condition: safeStr(targetCohort?.label || targetCohort?.condition || targetCohort?.name),
     outcome: outcome?.required === false ? 'Not specified' : safeStr(outcome?.label || outcome?.name || outcome?.condition || outcome),
-    observation_window: obsWindow ? `${safeStr(obsWindow.start_date)} to ${safeStr(obsWindow.end_date)}` : 'N/A',
     comparator: protocol.comparator?.enabled ? safeStr(protocol.comparator?.label || protocol.comparator?.definition) : 'None',
     original_question: safeStr(protocol.original_question),
   })
 
+  function handleApprove() {
+    const updated = {
+      ...protocol,
+      study_type: editableFields.study_type,
+      original_question: editableFields.original_question,
+    }
+    setProtocol(updated)
+    navigate('/concepts')
+  }
+
   return (
     <div className="max-w-6xl mx-auto">
-      {/* Page header */}
       <div className="flex justify-between items-start mb-8">
         <div>
           <div className="flex items-center gap-2 mb-1">
@@ -85,9 +77,7 @@ export default function ProtocolReview() {
         </div>
       </div>
 
-      {/* Split view */}
       <div className="grid grid-cols-12 gap-8">
-        {/* Left: Protocol fields */}
         <div className="col-span-7 bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm">
           <div className="px-6 py-4 border-b border-slate-100 bg-slate-50/50 flex justify-between items-center">
             <h3 className="font-semibold text-slate-900 flex items-center gap-2">
@@ -96,34 +86,195 @@ export default function ProtocolReview() {
             </h3>
             <span className="text-[11px] font-bold text-slate-400 bg-slate-100 px-2 py-1 rounded">AI GENERATED</span>
           </div>
-          <div className="p-6 space-y-3">
-            {Object.entries(editableFields).map(([key, value]) => (
-              <div key={key} className="flex gap-4 p-3 rounded-lg bg-slate-50 border border-slate-100 items-center">
-                <div className="w-44 shrink-0">
-                  <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">
-                    {key.replace(/_/g, ' ')}
-                  </p>
-                </div>
-                <input
-                  type="text"
-                  value={value}
-                  onChange={(e) => setEditableFields(prev => ({ ...prev, [key]: e.target.value }))}
-                  className="flex-1 text-sm text-slate-800 font-medium bg-white border border-slate-200 rounded-lg px-3 py-1.5 focus:ring-2 focus:ring-teal-500/20 focus:border-teal-400 outline-none transition-all"
+
+          <div className="px-6 pb-6 pt-6">
+            <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-4">Review & Edit Protocol</p>
+            <div className="space-y-4">
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-500 mb-1">Study Type</label>
+                <select
+                  value={editableFields.study_type}
+                  onChange={(e) => setEditableFields(prev => ({ ...prev, study_type: e.target.value }))}
+                  className="w-full text-sm text-slate-800 bg-white border border-slate-200 rounded-lg px-3 py-2 focus:ring-2 focus:ring-teal-500/20 outline-none"
+                >
+                  <option value="cohort_characterization">Cohort Characterization</option>
+                  <option value="incidence_analysis">Incidence Analysis</option>
+                  <option value="lab_value_summary">Lab Value Summary</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-500 mb-1">AI Interpreted Question <span className="text-slate-400 font-normal">(read-only)</span></label>
+                <p className="text-sm text-slate-600 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">{protocol?.normalized_question || '—'}</p>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-500 mb-1">Patient Population</label>
+                <textarea
+                  value={editableFields.condition}
+                  onChange={(e) => setEditableFields(prev => ({ ...prev, condition: e.target.value }))}
+                  rows={2}
+                  className="w-full text-sm text-slate-800 bg-white border border-slate-200 rounded-lg px-3 py-2 focus:ring-2 focus:ring-teal-500/20 outline-none resize-none"
                 />
               </div>
-            ))}
-          </div>
-          {/* Edit section */}
-          <div className="px-6 pb-6">
-            <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Edit Protocol (optional)</p>
-            <textarea
-              value={draft}
-              onChange={(e) => { setDraft(e.target.value); setParseError(null) }}
-              rows={8}
-              className="w-full font-mono text-xs bg-slate-50 border border-slate-200 rounded-lg p-3 focus:ring-2 focus:ring-teal-500/20 outline-none resize-none"
-            />
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-500 mb-1">Minimum Age (years)</label>
+                  <input
+                    type="number"
+                    value={protocol?.target_cohort?.demographic_filters?.age?.min ?? ''}
+                    onChange={(e) => {
+                      const updated = JSON.parse(JSON.stringify(protocol))
+                      if (updated.target_cohort?.demographic_filters?.age) {
+                        updated.target_cohort.demographic_filters.age.min = Number(e.target.value)
+                        setProtocol(updated)
+                      }
+                    }}
+                    className="w-full text-sm text-slate-800 bg-white border border-slate-200 rounded-lg px-3 py-2 focus:ring-2 focus:ring-teal-500/20 outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-500 mb-1">Maximum Age (years)</label>
+                  <input
+                    type="number"
+                    value={protocol?.target_cohort?.demographic_filters?.age?.max ?? ''}
+                    onChange={(e) => {
+                      const updated = JSON.parse(JSON.stringify(protocol))
+                      if (updated.target_cohort?.demographic_filters?.age) {
+                        updated.target_cohort.demographic_filters.age.max = Number(e.target.value) || null
+                        setProtocol(updated)
+                      }
+                    }}
+                    placeholder="No limit"
+                    className="w-full text-sm text-slate-800 bg-white border border-slate-200 rounded-lg px-3 py-2 focus:ring-2 focus:ring-teal-500/20 outline-none"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-500 mb-2">Sex Filter</label>
+                <div className="flex gap-4">
+                  {['male', 'female', 'unknown'].map(sex => (
+                    <label key={sex} className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={protocol?.target_cohort?.demographic_filters?.sex?.includes(sex) ?? true}
+                        onChange={(e) => {
+                          const updated = JSON.parse(JSON.stringify(protocol))
+                          const current = updated.target_cohort?.demographic_filters?.sex || []
+                          updated.target_cohort.demographic_filters.sex = e.target.checked
+                            ? [...current, sex]
+                            : current.filter(s => s !== sex)
+                          setProtocol(updated)
+                        }}
+                        className="rounded border-slate-300 text-teal-600"
+                      />
+                      <span className="text-sm text-slate-700 capitalize">{sex}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-500 mb-1">Study Period Start</label>
+                  <input
+                    type="date"
+                    value={protocol?.time_windows?.calendar_window?.start_date || ''}
+                    onChange={(e) => {
+                      const updated = JSON.parse(JSON.stringify(protocol))
+                      if (updated.time_windows?.calendar_window) {
+                        updated.time_windows.calendar_window.start_date = e.target.value
+                        setProtocol(updated)
+                      }
+                    }}
+                    className="w-full text-sm text-slate-800 bg-white border border-slate-200 rounded-lg px-3 py-2 focus:ring-2 focus:ring-teal-500/20 outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-500 mb-1">Study Period End</label>
+                  <input
+                    type="date"
+                    value={protocol?.time_windows?.calendar_window?.end_date || ''}
+                    onChange={(e) => {
+                      const updated = JSON.parse(JSON.stringify(protocol))
+                      if (updated.time_windows?.calendar_window) {
+                        updated.time_windows.calendar_window.end_date = e.target.value
+                        setProtocol(updated)
+                      }
+                    }}
+                    className="w-full text-sm text-slate-800 bg-white border border-slate-200 rounded-lg px-3 py-2 focus:ring-2 focus:ring-teal-500/20 outline-none"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-500 mb-1">Outcome of Interest</label>
+                <input
+                  type="text"
+                  value={editableFields.outcome}
+                  onChange={(e) => setEditableFields(prev => ({ ...prev, outcome: e.target.value }))}
+                  placeholder="Not specified"
+                  className="w-full text-sm text-slate-800 bg-white border border-slate-200 rounded-lg px-3 py-2 focus:ring-2 focus:ring-teal-500/20 outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-500 mb-1">Comparator Group</label>
+                <input
+                  type="text"
+                  value={editableFields.comparator}
+                  onChange={(e) => setEditableFields(prev => ({ ...prev, comparator: e.target.value }))}
+                  placeholder="None"
+                  className="w-full text-sm text-slate-800 bg-white border border-slate-200 rounded-lg px-3 py-2 focus:ring-2 focus:ring-teal-500/20 outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-500 mb-1">SQL Template <span className="text-slate-400 font-normal">(read-only)</span></label>
+                <p className="text-sm text-slate-600 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 font-mono">{protocol?.execution?.sql_template || '—'}</p>
+              </div>
+
+              {protocol?.issues?.warnings?.length > 0 && (
+                <div>
+                  <label className="block text-xs font-semibold text-slate-500 mb-2">
+                    AI Warnings <span className="text-slate-400 font-normal">(read-only)</span>
+                  </label>
+                  <div className="space-y-2">
+                    {protocol.issues.warnings.map((w, i) => (
+                      <div key={i} className="flex items-start gap-2 text-sm text-slate-600 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2">
+                        <span className="material-symbols-outlined text-amber-500 text-sm mt-0.5 shrink-0">warning</span>
+                        <div>
+                          <span className="font-semibold text-amber-700 text-xs uppercase tracking-wide">{w.code}: </span>
+                          <span>{w.message}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {protocol?.assumptions?.length > 0 && (
+                <div>
+                  <label className="block text-xs font-semibold text-slate-500 mb-2">
+                    AI Assumptions <span className="text-slate-400 font-normal">(read-only)</span>
+                  </label>
+                  <div className="space-y-2">
+                    {protocol.assumptions.map((a, i) => (
+                      <div key={i} className="flex items-start gap-2 text-sm text-slate-600 bg-blue-50 border border-blue-100 rounded-lg px-3 py-2">
+                        <span className="material-symbols-outlined text-blue-500 text-sm mt-0.5 shrink-0">info</span>
+                        <span>{a}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+            </div>
             {parseError && (
-              <p className="text-red-600 text-xs mt-1 flex items-center gap-1">
+              <p className="text-red-600 text-xs mt-3 flex items-center gap-1">
                 <span className="material-symbols-outlined text-sm">error</span>
                 {parseError}
               </p>
@@ -131,7 +282,6 @@ export default function ProtocolReview() {
           </div>
         </div>
 
-        {/* Right: AI insight card */}
         <div className="col-span-5 flex flex-col gap-6">
           <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
             <h3 className="font-semibold text-slate-900 flex items-center gap-2 mb-4">
@@ -141,11 +291,11 @@ export default function ProtocolReview() {
             <div className="space-y-3">
               <div className="flex items-center justify-between p-3 border border-slate-100 rounded-lg">
                 <span className="text-sm text-slate-600">Study type</span>
-                <span className="text-sm font-semibold text-slate-900 capitalize">{protocol.study_type?.replace('_', ' ')}</span>
+                <span className="text-sm font-semibold text-slate-900 capitalize">{editableFields.study_type?.replace(/_/g, ' ')}</span>
               </div>
               <div className="flex items-center justify-between p-3 border border-slate-100 rounded-lg">
                 <span className="text-sm text-slate-600">Concepts to validate</span>
-                <span className="text-sm font-semibold text-teal-600">2 terms</span>
+                <span className="text-sm font-semibold text-teal-600">{protocol?.concept_sets?.length || 2} terms</span>
               </div>
               <div className="flex items-center justify-between p-3 border border-slate-100 rounded-lg">
                 <span className="text-sm text-slate-600">Ready for execution</span>
