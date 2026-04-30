@@ -31,6 +31,8 @@ TWO PRAGMATIC WORKAROUNDS (remove once  extends the facade)
    exposes one.
 """
 
+import asyncio
+import json
 import os
 import sys
 import time
@@ -42,7 +44,7 @@ import psycopg2
 from psycopg2 import pool as pg_pool
 from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
 from config import get_settings
 from schemas import (
@@ -163,23 +165,29 @@ async def lifespan(app: FastAPI):
 
     # Workaround 2: force lazy concept-mapper init at startup so the first
     # request doesn't pay the CONCEPT.csv load cost.
-    try:
-        resolver = app.state.rwe._get_concept_mapping_resolver()
-        remote = getattr(resolver, "remote_client", None)
-        if remote:
-            logger.info(
-                f"Concept mapper ready — LOF remote at "
-                f"{remote.get('base_url', 'unknown')}"
-            )
-        else:
-            logger.warning(
-                f"Concept mapper ready — LOF credentials not found, "
-                f"local-only fallback (source_mode={settings.concept_mapping_source}). "
-                f"Set LOF_CLIENT_ID and LOF_CLIENT_SECRET to enable remote IMO."
-            )
-    except PipelineStageError as exc:
-        logger.error(f"Concept mapper init failed — {exc.stage}/{exc.kind}: {exc}")
-        raise
+    if not settings.skip_concept_warmup:
+        try:
+            resolver = app.state.rwe._get_concept_mapping_resolver()
+            remote = getattr(resolver, "remote_client", None)
+            if remote:
+                logger.info(
+                    f"Concept mapper ready — LOF remote at "
+                    f"{remote.get('base_url', 'unknown')}"
+                )
+            else:
+                logger.warning(
+                    f"Concept mapper ready — LOF credentials not found, "
+                    f"local-only fallback (source_mode={settings.concept_mapping_source}). "
+                    f"Set LOF_CLIENT_ID and LOF_CLIENT_SECRET to enable remote IMO."
+                )
+        except PipelineStageError as exc:
+            logger.error(f"Concept mapper init failed — {exc.stage}/{exc.kind}: {exc}")
+            raise
+    else:
+        logger.warning(
+            "Concept mapper warmup skipped (SKIP_CONCEPT_WARMUP=true). "
+            "Concept mapping will lazy-load on first /validate-concepts call."
+        )
 
     # Postgres connection pool for /execute-query. Small pool — single backend
     # process, queries are short-lived. Fails fast if the DB is unreachable
@@ -339,6 +347,100 @@ async def generate_protocol(
         f"concept_sets={len(protocol.get('concept_sets', []))}"
     )
     return protocol
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ENDPOINT 1b — POST /generate-protocol/stream
+#
+# SSE variant of /generate-protocol. Emits one event per pipeline stage so
+# the frontend can render a live stepper. The existing /generate-protocol
+# endpoint is unchanged — CLI callers and smoke tests keep using it.
+#
+# Bridge pattern: sync pipeline runs in a thread via asyncio.to_thread so the
+# event loop stays free. The on_progress callback calls queue.put_nowait which
+# is thread-safe. The async generator drains the queue, yielding keepalive
+# comments every 15 s so proxies don't close idle connections.
+#
+# SSE frame format: "event: {name}\ndata: {json}\n\n"
+# Keepalive format: ": keepalive\n\n"  (SSE comment — browsers ignore it)
+# ─────────────────────────────────────────────────────────────────────────────
+
+_SSE_HEADERS = {
+    "Cache-Control": "no-cache",
+    "X-Accel-Buffering": "no",
+    "Connection": "keep-alive",
+}
+_HEARTBEAT_SECONDS = 15
+
+
+def _sse(event: str, payload: dict) -> str:
+    return f"event: {event}\ndata: {json.dumps(payload)}\n\n"
+
+
+@app.post(
+    "/generate-protocol/stream",
+    tags=["pipeline"],
+    summary="Step 1 (streaming) — protocol generation with per-stage SSE events",
+)
+async def stream_generate_protocol(
+    http_request: Request,
+    request: ProtocolRequest,
+):
+    rwe = http_request.app.state.rwe
+    queue: asyncio.Queue = asyncio.Queue()
+
+    def _callback(event: dict) -> None:
+        queue.put_nowait(event)
+
+    async def _event_stream():
+        yield _sse("received", {})
+
+        task = asyncio.create_task(
+            asyncio.to_thread(
+                rwe.generate_protocol,
+                request.question,
+                verify=request.verify,
+                on_progress=_callback,
+            )
+        )
+
+        while not task.done():
+            try:
+                event = await asyncio.wait_for(queue.get(), timeout=_HEARTBEAT_SECONDS)
+                yield _sse(event["event"], {k: v for k, v in event.items() if k != "event"})
+            except asyncio.TimeoutError:
+                yield ": keepalive\n\n"
+
+        # Drain any events the callback queued after the task finished
+        while not queue.empty():
+            event = queue.get_nowait()
+            yield _sse(event["event"], {k: v for k, v in event.items() if k != "event"})
+
+        exc = task.exception()
+        if exc is None:
+            yield _sse("done", task.result())
+        else:
+            if isinstance(exc, PipelineStageError):
+                http_status, recoverable = _STAGE_KIND_STATUS.get(
+                    (exc.stage, exc.kind),
+                    (status.HTTP_500_INTERNAL_SERVER_ERROR, True),
+                )
+                yield _sse("error", {
+                    "error_code": exc.kind.upper(),
+                    "message": str(exc),
+                    "recoverable": recoverable,
+                    "stage": exc.stage,
+                    "details": exc.details,
+                })
+            else:
+                logger.error(f"stream_generate_protocol — unhandled: {exc}")
+                yield _sse("error", {
+                    "error_code": "INTERNAL_SERVER_ERROR",
+                    "message": "An unexpected error occurred.",
+                    "recoverable": True,
+                })
+
+    return StreamingResponse(_event_stream(), media_type="text/event-stream", headers=_SSE_HEADERS)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

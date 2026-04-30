@@ -1,5 +1,5 @@
 """
-tests/test_smoke.py — Updated smoke tests for Sprint 2 architecture.
+tests/test_smoke.py — Updated smoke tests for Sprint 2 architecture + stream endpoint.
 
 WHAT CHANGED FROM SPRINT 1
 ───────────────────────────
@@ -13,6 +13,8 @@ shape validation is the goal here — not end-to-end integration.
 For live integration tests (TC-04, TC-05, TC-06, TC-10), see Rahul's
 integration test suite which runs against the real endpoints with credentials.
 """
+
+import json
 
 from fastapi.testclient import TestClient
 from unittest.mock import patch, MagicMock
@@ -242,3 +244,232 @@ def test_execute_query_demographics_sum_to_cohort_size():
     data = response.json()
     sex = data["demographics"]["sex"]
     assert sex["male"] + sex["female"] + sex["other"] == data["cohort_size"]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# /generate-protocol/stream
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _parse_sse_frames(raw: str) -> list[dict]:
+    """Parse a raw SSE response body into a list of {event, data} dicts.
+
+    Skips comment lines (keepalives) and blank frames.
+    """
+    frames = []
+    for block in raw.split("\n\n"):
+        block = block.strip()
+        if not block or block.startswith(":"):
+            continue
+        frame: dict = {}
+        for line in block.splitlines():
+            if line.startswith("event:"):
+                frame["event"] = line[len("event:"):].strip()
+            elif line.startswith("data:"):
+                raw_data = line[len("data:"):].strip()
+                try:
+                    frame["data"] = json.loads(raw_data)
+                except json.JSONDecodeError:
+                    frame["data"] = raw_data
+        if frame:
+            frames.append(frame)
+    return frames
+
+
+def test_stream_generate_protocol_http_plumbing():
+    """HTTP plumbing test: mock returns protocol directly (no on_progress calls).
+
+    Verifies that the stream endpoint:
+    - Returns 200 with text/event-stream content type
+    - Always emits a 'received' frame first
+    - Always emits a 'done' frame last
+    - The 'done' data contains the protocol shape (study_type, concept_sets)
+    """
+    mock_rwe = MagicMock()
+    mock_rwe.generate_protocol.return_value = _minimal_protocol()
+
+    with patch.object(app.state, "rwe", mock_rwe, create=True):
+        response = client.post(
+            "/generate-protocol/stream",
+            json={"question": "What is the incidence of CKD in T2D patients on metformin?"},
+        )
+
+    assert response.status_code == 200
+    assert "text/event-stream" in response.headers["content-type"]
+
+    frames = _parse_sse_frames(response.text)
+    events = [f["event"] for f in frames]
+
+    assert events[0] == "received"
+    assert events[-1] == "done"
+
+    done_data = frames[-1]["data"]
+    assert "study_type" in done_data
+    assert "concept_sets" in done_data
+    assert done_data["protocol_status"] == "needs_mapping"
+
+
+def test_stream_generate_protocol_event_sequence():
+    """Event sequence test: side_effect fires on_progress at every stage boundary.
+
+    Verifies that when the pipeline calls on_progress correctly, the stream
+    endpoint emits events in the expected order:
+    received → interpretation_attempt → interpretation_completed →
+    protocol_built → schema_validated → done
+    """
+    def _fake_generate_protocol(question, *, verify=None, on_progress=None):
+        if on_progress:
+            on_progress({"event": "interpretation_attempt", "model": "zai-org-glm-5", "attempt": 1, "max_attempts": 2})
+            on_progress({"event": "interpretation_completed"})
+            on_progress({"event": "protocol_built"})
+            on_progress({"event": "schema_validated"})
+        return _minimal_protocol()
+
+    mock_rwe = MagicMock()
+    mock_rwe.generate_protocol.side_effect = _fake_generate_protocol
+
+    with patch.object(app.state, "rwe", mock_rwe, create=True):
+        response = client.post(
+            "/generate-protocol/stream",
+            json={"question": "What is the incidence of CKD in T2D patients on metformin?"},
+        )
+
+    assert response.status_code == 200
+    frames = _parse_sse_frames(response.text)
+    events = [f["event"] for f in frames]
+
+    assert events[0] == "received"
+    assert "interpretation_attempt" in events
+    assert "interpretation_completed" in events
+    assert "protocol_built" in events
+    assert "schema_validated" in events
+    assert events[-1] == "done"
+
+    # interpretation_attempt carries model metadata
+    attempt_frame = next(f for f in frames if f["event"] == "interpretation_attempt")
+    assert attempt_frame["data"]["model"] == "zai-org-glm-5"
+    assert attempt_frame["data"]["attempt"] == 1
+    assert attempt_frame["data"]["max_attempts"] == 2
+
+
+def test_stream_generate_protocol_error_emits_error_event():
+    """When the pipeline raises PipelineStageError, the stream emits an error frame."""
+    from llm.api import PipelineStageError
+
+    mock_rwe = MagicMock()
+    mock_rwe.generate_protocol.side_effect = PipelineStageError(
+        "llm", "all_models_failed", "All models failed."
+    )
+
+    with patch.object(app.state, "rwe", mock_rwe, create=True):
+        response = client.post(
+            "/generate-protocol/stream",
+            json={"question": "What is the incidence of CKD in T2D patients on metformin?"},
+        )
+
+    assert response.status_code == 200
+    frames = _parse_sse_frames(response.text)
+    events = [f["event"] for f in frames]
+
+    assert "error" in events
+    error_frame = next(f for f in frames if f["event"] == "error")
+    assert error_frame["data"]["error_code"] == "ALL_MODELS_FAILED"
+    assert error_frame["data"]["recoverable"] is True
+
+
+def test_stream_generate_protocol_rejects_short_question():
+    """Pydantic validation (min_length=10) fires before the stream opens."""
+    response = client.post("/generate-protocol/stream", json={"question": "hi"})
+    assert response.status_code == 422
+
+
+def test_stream_emits_verification_subevents_with_messages():
+    """Verification sub-events flow through SSE with a `message` field for direct UI render.
+
+    Simulates the reasoning-recovery branch in _semantic_verify_protocol:
+    review attempt -> empty response -> finalize call -> success.
+    """
+    def _fake_generate_protocol(question, *, verify=None, on_progress=None):
+        if on_progress:
+            on_progress({"event": "interpretation_attempt", "model": "zai-org-glm-5",
+                         "attempt": 1, "max_attempts": 2,
+                         "message": "Interpreting question with zai-org-glm-5 (attempt 1/2)"})
+            on_progress({"event": "interpretation_completed",
+                         "message": "Interpretation parsed and validated"})
+            on_progress({"event": "protocol_built",
+                         "message": "Built draft protocol from interpretation"})
+            on_progress({"event": "schema_validated",
+                         "message": "Draft protocol passes schema validation"})
+            on_progress({"event": "verification_started",
+                         "message": "Starting clinical review of the generated protocol"})
+            on_progress({"event": "verification_attempt", "model": "kimi-k2-5",
+                         "attempt": 1, "max_attempts": 2,
+                         "message": "Reviewing protocol with kimi-k2-5 (attempt 1/2)"})
+            on_progress({"event": "verification_call_started", "model": "kimi-k2-5",
+                         "phase": "review", "timeout_seconds": 120,
+                         "message": "Asking kimi-k2-5 to check for clinical issues (up to 120s)"})
+            on_progress({"event": "verification_call_completed", "model": "kimi-k2-5",
+                         "phase": "review", "elapsed_seconds": 88.0,
+                         "message": "kimi-k2-5 responded (88.0s)"})
+            on_progress({"event": "verification_reasoning_recovery", "model": "kimi-k2-5",
+                         "message": "kimi-k2-5 returned reasoning without JSON — extracting the corrected protocol"})
+            on_progress({"event": "verification_call_started", "model": "kimi-k2-5",
+                         "phase": "finalize", "timeout_seconds": 120,
+                         "message": "Asking kimi-k2-5 to format the corrected protocol as JSON (up to 120s)"})
+            on_progress({"event": "verification_call_completed", "model": "kimi-k2-5",
+                         "phase": "finalize", "elapsed_seconds": 54.0,
+                         "message": "kimi-k2-5 formatter responded (54.0s)"})
+            on_progress({"event": "verification_succeeded", "model": "kimi-k2-5",
+                         "attempt": 1, "phase": "finalize",
+                         "message": "Clinical review complete via reasoning recovery (kimi-k2-5)"})
+            on_progress({"event": "verification_completed",
+                         "message": "Protocol verified"})
+        return _minimal_protocol()
+
+    mock_rwe = MagicMock()
+    mock_rwe.generate_protocol.side_effect = _fake_generate_protocol
+
+    with patch.object(app.state, "rwe", mock_rwe, create=True):
+        response = client.post(
+            "/generate-protocol/stream",
+            json={
+                "question": "What is the incidence of CKD in T2D patients on metformin?",
+                "verify": True,
+            },
+        )
+
+    assert response.status_code == 200
+    frames = _parse_sse_frames(response.text)
+    events = [f["event"] for f in frames]
+
+    expected_in_order = [
+        "received",
+        "verification_started",
+        "verification_attempt",
+        "verification_call_started",
+        "verification_call_completed",
+        "verification_reasoning_recovery",
+        "verification_succeeded",
+        "verification_completed",
+        "done",
+    ]
+    indices = [events.index(name) for name in expected_in_order]
+    assert indices == sorted(indices), f"events out of order: {events}"
+
+    # Every progress frame (excluding the `received` opener and final `done`)
+    # carries a human-readable `message` field for the frontend to render.
+    progress_frames = [
+        f for f in frames if f["event"] not in {"received", "done"}
+    ]
+    for frame in progress_frames:
+        assert "message" in frame["data"], f"missing message: {frame}"
+        assert isinstance(frame["data"]["message"], str)
+        assert frame["data"]["message"]
+
+    # Spot-check metadata on a verification_call_completed frame.
+    call_completed = next(
+        f for f in frames
+        if f["event"] == "verification_call_completed"
+        and f["data"].get("phase") == "review"
+    )
+    assert call_completed["data"]["model"] == "kimi-k2-5"
+    assert call_completed["data"]["elapsed_seconds"] == 88.0
