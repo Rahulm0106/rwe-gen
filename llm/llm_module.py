@@ -4,9 +4,11 @@ import json
 import os
 import re
 import time
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path
+from threading import Lock
 from typing import Any, Callable, Iterable
 
 import requests
@@ -395,6 +397,11 @@ class ProtocolLLMGenerator:
     # ---------------------------------------------------------------------
     # Semantic verification stage
     # ---------------------------------------------------------------------
+    # Cap retries at 2 per primary regardless of config — beyond that is just burn.
+    _MAX_REVIEWER_ATTEMPTS = 2
+    # Abandon a reviewer model after this many consecutive reasoning-only outputs.
+    _REASONING_ONLY_ABANDON_THRESHOLD = 2
+
     def _semantic_verify_protocol(
         self,
         question: str,
@@ -405,12 +412,29 @@ class ProtocolLLMGenerator:
     ) -> dict[str, Any]:
         failures: list[dict[str, Any]] = []
         verification_timeout = self.config.verification_timeout_seconds or self.config.timeout_seconds
+        emit_lock = Lock()
+
+        def safe_emit(event: str, message: str, **fields: Any) -> None:
+            if on_progress is None:
+                return
+            with emit_lock:
+                self._emit(on_progress, event, message, **fields)
+
+        def thread_safe_callback(event_dict: dict) -> None:
+            if on_progress is None:
+                return
+            with emit_lock:
+                on_progress(event_dict)
+
+        models = list(self.config.verification_models)
+        abandoned: set[str] = set()
         previous_model_name: str | None = None
 
-        for model_config in self.config.verification_models:
+        for primary_idx, model_config in enumerate(models):
+            if model_config.name in abandoned:
+                continue
             if previous_model_name is not None:
-                self._emit(
-                    on_progress,
+                safe_emit(
                     "verification_model_fallback",
                     f"Previous reviewer ({previous_model_name}) couldn't produce a "
                     f"valid protocol — handing off to {model_config.name}",
@@ -419,203 +443,90 @@ class ProtocolLLMGenerator:
                 )
             previous_model_name = model_config.name
 
+            max_attempts = max(1, min(model_config.retries, self._MAX_REVIEWER_ATTEMPTS))
             messages = self._build_verification_messages(question, protocol)
             previous_response: str | None = None
-            for attempt in range(1, model_config.retries + 1):
-                self._emit(
-                    on_progress,
+            reasoning_only_count = 0
+
+            for attempt in range(1, max_attempts + 1):
+                safe_emit(
                     "verification_attempt",
                     f"Reviewing protocol with {model_config.name} "
-                    f"(attempt {attempt}/{model_config.retries})",
+                    f"(attempt {attempt}/{max_attempts})",
                     model=model_config.name,
                     attempt=attempt,
-                    max_attempts=model_config.retries,
+                    max_attempts=max_attempts,
                 )
                 try:
-                    self._emit(
-                        on_progress,
-                        "verification_call_started",
-                        f"Asking {model_config.name} to check for clinical issues "
-                        f"(up to {verification_timeout}s)",
-                        model=model_config.name,
-                        phase="review",
-                        timeout_seconds=verification_timeout,
-                    )
-                    t0 = time.monotonic()
-                    response_text = self._call_venice_api(
-                        api_key=api_key,
+                    candidate = self._review_call(
                         model_config=model_config,
                         messages=messages,
+                        api_key=api_key,
+                        question=question,
                         timeout_seconds=verification_timeout,
-                    )
-                    elapsed = round(time.monotonic() - t0, 2)
-                    self._emit(
-                        on_progress,
-                        "verification_call_completed",
-                        f"{model_config.name} responded ({elapsed}s)",
-                        model=model_config.name,
-                        phase="review",
-                        elapsed_seconds=elapsed,
-                    )
-                    previous_response = response_text
-                    self._emit(
-                        on_progress,
-                        "verification_parsing",
-                        "Parsing reviewer's response",
-                        model=model_config.name,
-                        phase="review",
-                    )
-                    candidate = self._parse_json_response(response_text)
-                    candidate["original_question"] = question
-                    candidate = self._apply_pre_mapping_defaults(candidate, question)
-                    self._emit(
-                        on_progress,
-                        "verification_validating",
-                        "Validating reviewed protocol against schema",
-                        model=model_config.name,
-                        phase="review",
-                    )
-                    self._validate_protocol(candidate)
-                    self._emit(
-                        on_progress,
-                        "verification_succeeded",
-                        f"Clinical review complete via {model_config.name}",
-                        model=model_config.name,
-                        attempt=attempt,
-                        phase="review",
+                        on_progress=thread_safe_callback,
                     )
                     return candidate
                 except LLMError as exc:
                     reasoning_text = self._extract_reasoning_text_from_error(exc)
                     if exc.kind == "empty_response" and reasoning_text:
-                        self._emit(
-                            on_progress,
+                        reasoning_only_count += 1
+                        safe_emit(
                             "verification_reasoning_recovery",
                             f"{model_config.name} returned reasoning without JSON — "
                             "extracting the corrected protocol",
                             model=model_config.name,
                         )
-                        try:
-                            self._emit(
-                                on_progress,
-                                "verification_call_started",
-                                f"Asking {model_config.name} to format the corrected "
-                                f"protocol as JSON (up to {verification_timeout}s)",
+
+                        backup = next(
+                            (m for m in models[primary_idx + 1:] if m.name not in abandoned),
+                            None,
+                        )
+
+                        result, recovery_failures = self._run_speculative_review(
+                            primary=model_config,
+                            primary_reasoning=reasoning_text,
+                            backup=backup,
+                            question=question,
+                            original_protocol=protocol,
+                            api_key=api_key,
+                            timeout_seconds=verification_timeout,
+                            emit_lock=emit_lock,
+                            on_progress=on_progress,
+                        )
+                        if result is not None:
+                            return result
+                        failures.extend(recovery_failures)
+
+                        if reasoning_only_count >= self._REASONING_ONLY_ABANDON_THRESHOLD:
+                            abandoned.add(model_config.name)
+                            safe_emit(
+                                "verification_model_abandoned",
+                                f"{model_config.name} returned reasoning-only "
+                                f"{reasoning_only_count}× in a row — abandoning this model",
                                 model=model_config.name,
-                                phase="finalize",
-                                timeout_seconds=verification_timeout,
+                                reasoning_only_count=reasoning_only_count,
                             )
-                            t0 = time.monotonic()
-                            finalized_text = self._call_venice_api(
-                                api_key=api_key,
-                                model_config=model_config,
-                                messages=self._build_verification_finalize_messages(
-                                    question=question,
-                                    original_protocol=protocol,
-                                    reasoning_text=reasoning_text,
-                                ),
-                                timeout_seconds=verification_timeout,
-                            )
-                            elapsed = round(time.monotonic() - t0, 2)
-                            self._emit(
-                                on_progress,
-                                "verification_call_completed",
-                                f"{model_config.name} formatter responded ({elapsed}s)",
-                                model=model_config.name,
-                                phase="finalize",
-                                elapsed_seconds=elapsed,
-                            )
-                            previous_response = finalized_text
-                            self._emit(
-                                on_progress,
-                                "verification_parsing",
-                                "Parsing formatted protocol",
-                                model=model_config.name,
-                                phase="finalize",
-                            )
-                            candidate = self._parse_json_response(finalized_text)
-                            candidate["original_question"] = question
-                            candidate = self._apply_pre_mapping_defaults(candidate, question)
-                            self._emit(
-                                on_progress,
-                                "verification_validating",
-                                "Validating reviewed protocol against schema",
-                                model=model_config.name,
-                                phase="finalize",
-                            )
-                            self._validate_protocol(candidate)
-                            self._emit(
-                                on_progress,
-                                "verification_succeeded",
-                                f"Clinical review complete via reasoning recovery "
-                                f"({model_config.name})",
+                            break
+
+                        if attempt < max_attempts:
+                            safe_emit(
+                                "verification_repair",
+                                f"Speculative recovery failed — retrying "
+                                f"{model_config.name} with corrections",
                                 model=model_config.name,
                                 attempt=attempt,
-                                phase="finalize",
+                                error_kind="reasoning_only",
                             )
-                            return candidate
-                        except LLMError as finalize_exc:
-                            formatter_reasoning = self._extract_reasoning_text_from_error(finalize_exc) or reasoning_text
-                            try:
-                                self._emit(
-                                    on_progress,
-                                    "verification_formatter_started",
-                                    f"Reformatting reviewer reasoning into a valid "
-                                    f"protocol via {model_config.name}",
-                                    model=model_config.name,
-                                )
-                                return self._format_protocol_from_reasoning(
-                                    question=question,
-                                    original_protocol=protocol,
-                                    reasoning_text=formatter_reasoning,
-                                    api_key=api_key,
-                                    timeout_seconds=verification_timeout,
-                                    on_progress=on_progress,
-                                )
-                            except LLMError as formatter_exc:
-                                failures.append(
-                                    {
-                                        "model": model_config.name,
-                                        "attempt": attempt,
-                                        "kind": "reasoning_finalize_failed",
-                                        "message": str(finalize_exc),
-                                        "details": {
-                                            "initial_error": {
-                                                "kind": exc.kind,
-                                                "message": str(exc),
-                                                "details": exc.details,
-                                            },
-                                            "finalize_error": {
-                                                "kind": finalize_exc.kind,
-                                                "message": str(finalize_exc),
-                                                "details": finalize_exc.details,
-                                            },
-                                            "formatter_error": {
-                                                "kind": formatter_exc.kind,
-                                                "message": str(formatter_exc),
-                                                "details": formatter_exc.details,
-                                            },
-                                        },
-                                    }
-                                )
-                                if attempt < model_config.retries:
-                                    self._emit(
-                                        on_progress,
-                                        "verification_repair",
-                                        f"Reasoning recovery failed — retrying "
-                                        f"{model_config.name} with corrections",
-                                        model=model_config.name,
-                                        attempt=attempt,
-                                        error_kind=finalize_exc.kind,
-                                    )
-                                    messages = self._build_verification_repair_messages(
-                                        question=question,
-                                        original_protocol=protocol,
-                                        previous_response=previous_response,
-                                        error_details=finalize_exc.details,
-                                    )
-                                continue
+                            messages = self._build_verification_repair_messages(
+                                question=question,
+                                original_protocol=protocol,
+                                previous_response=previous_response,
+                                error_details=exc.details,
+                            )
+                        continue
 
+                    previous_response = exc.details.get("response_text") if isinstance(exc.details, dict) else None
                     failures.append(
                         {
                             "model": model_config.name,
@@ -625,9 +536,8 @@ class ProtocolLLMGenerator:
                             "details": exc.details,
                         }
                     )
-                    if attempt < model_config.retries:
-                        self._emit(
-                            on_progress,
+                    if attempt < max_attempts:
+                        safe_emit(
                             "verification_repair",
                             f"Reviewer's output failed ({exc.kind}) — retrying "
                             f"{model_config.name} with corrections",
@@ -653,6 +563,395 @@ class ProtocolLLMGenerator:
             }
         )
         return candidate
+
+    # ---------------------------------------------------------------------
+    # Verification helpers (review call, recovery chain, speculation)
+    # ---------------------------------------------------------------------
+    def _review_call(
+        self,
+        *,
+        model_config: VeniceModelConfig,
+        messages: list[dict[str, str]],
+        api_key: str,
+        question: str,
+        timeout_seconds: int,
+        on_progress: Callable[[dict], None] | None,
+    ) -> dict[str, Any]:
+        self._emit(
+            on_progress,
+            "verification_call_started",
+            f"Asking {model_config.name} to check for clinical issues "
+            f"(up to {timeout_seconds}s)",
+            model=model_config.name,
+            phase="review",
+            timeout_seconds=timeout_seconds,
+        )
+        t0 = time.monotonic()
+        try:
+            response_text = self._call_venice_api(
+                api_key=api_key,
+                model_config=model_config,
+                messages=messages,
+                timeout_seconds=timeout_seconds,
+            )
+        finally:
+            elapsed = round(time.monotonic() - t0, 2)
+            self._emit(
+                on_progress,
+                "verification_call_completed",
+                f"{model_config.name} responded ({elapsed}s)",
+                model=model_config.name,
+                phase="review",
+                elapsed_seconds=elapsed,
+            )
+        candidate = self._parse_json_response(response_text)
+        candidate["original_question"] = question
+        candidate = self._apply_pre_mapping_defaults(candidate, question)
+        self._validate_protocol(candidate)
+        self._emit(
+            on_progress,
+            "verification_succeeded",
+            f"Clinical review complete via {model_config.name}",
+            model=model_config.name,
+            phase="review",
+        )
+        return candidate
+
+    def _recover_from_reasoning_chain(
+        self,
+        *,
+        model_config: VeniceModelConfig,
+        reasoning_text: str,
+        question: str,
+        original_protocol: dict[str, Any],
+        api_key: str,
+        timeout_seconds: int,
+        on_progress: Callable[[dict], None] | None,
+    ) -> dict[str, Any]:
+        try:
+            self._emit(
+                on_progress,
+                "verification_call_started",
+                f"Asking {model_config.name} to format the corrected "
+                f"protocol as JSON (up to {timeout_seconds}s)",
+                model=model_config.name,
+                phase="finalize",
+                timeout_seconds=timeout_seconds,
+            )
+            t0 = time.monotonic()
+            try:
+                finalized_text = self._call_venice_api(
+                    api_key=api_key,
+                    model_config=model_config,
+                    messages=self._build_verification_finalize_messages(
+                        question=question,
+                        original_protocol=original_protocol,
+                        reasoning_text=reasoning_text,
+                    ),
+                    timeout_seconds=timeout_seconds,
+                )
+            finally:
+                elapsed = round(time.monotonic() - t0, 2)
+                self._emit(
+                    on_progress,
+                    "verification_call_completed",
+                    f"{model_config.name} formatter responded ({elapsed}s)",
+                    model=model_config.name,
+                    phase="finalize",
+                    elapsed_seconds=elapsed,
+                )
+            candidate = self._parse_json_response(finalized_text)
+            candidate["original_question"] = question
+            candidate = self._apply_pre_mapping_defaults(candidate, question)
+            self._validate_protocol(candidate)
+            self._emit(
+                on_progress,
+                "verification_succeeded",
+                f"Clinical review complete via reasoning recovery "
+                f"({model_config.name})",
+                model=model_config.name,
+                phase="finalize",
+            )
+            return candidate
+        except LLMError as finalize_exc:
+            formatter_reasoning = (
+                self._extract_reasoning_text_from_error(finalize_exc) or reasoning_text
+            )
+            self._emit(
+                on_progress,
+                "verification_formatter_started",
+                f"Reformatting reviewer reasoning into a valid protocol via "
+                f"{model_config.name}",
+                model=model_config.name,
+            )
+            return self._format_protocol_from_reasoning(
+                question=question,
+                original_protocol=original_protocol,
+                reasoning_text=formatter_reasoning,
+                api_key=api_key,
+                timeout_seconds=timeout_seconds,
+                on_progress=on_progress,
+            )
+
+    def _full_review_chain(
+        self,
+        *,
+        model_config: VeniceModelConfig,
+        question: str,
+        original_protocol: dict[str, Any],
+        api_key: str,
+        timeout_seconds: int,
+        on_progress: Callable[[dict], None] | None,
+    ) -> dict[str, Any]:
+        messages = self._build_verification_messages(question, original_protocol)
+        try:
+            return self._review_call(
+                model_config=model_config,
+                messages=messages,
+                api_key=api_key,
+                question=question,
+                timeout_seconds=timeout_seconds,
+                on_progress=on_progress,
+            )
+        except LLMError as exc:
+            reasoning_text = self._extract_reasoning_text_from_error(exc)
+            if exc.kind == "empty_response" and reasoning_text:
+                return self._recover_from_reasoning_chain(
+                    model_config=model_config,
+                    reasoning_text=reasoning_text,
+                    question=question,
+                    original_protocol=original_protocol,
+                    api_key=api_key,
+                    timeout_seconds=timeout_seconds,
+                    on_progress=on_progress,
+                )
+            raise
+
+    def _run_speculative_review(
+        self,
+        *,
+        primary: VeniceModelConfig,
+        primary_reasoning: str,
+        backup: VeniceModelConfig | None,
+        question: str,
+        original_protocol: dict[str, Any],
+        api_key: str,
+        timeout_seconds: int,
+        emit_lock: Lock,
+        on_progress: Callable[[dict], None] | None,
+    ) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
+        # Primary recovery + backup full chain run in parallel. We wait for both
+        # so we can cross-check on dual success — in healthcare, the second
+        # opinion is the value we'd otherwise lose by taking "first valid wins."
+        def thread_safe_progress(event_dict: dict) -> None:
+            if on_progress is None:
+                return
+            with emit_lock:
+                on_progress(event_dict)
+
+        def safe_emit(event: str, message: str, **fields: Any) -> None:
+            if on_progress is None:
+                return
+            with emit_lock:
+                self._emit(on_progress, event, message, **fields)
+
+        failures: list[dict[str, Any]] = []
+
+        if backup is None:
+            # No backup available — just run primary recovery sequentially.
+            try:
+                return (
+                    self._recover_from_reasoning_chain(
+                        model_config=primary,
+                        reasoning_text=primary_reasoning,
+                        question=question,
+                        original_protocol=original_protocol,
+                        api_key=api_key,
+                        timeout_seconds=timeout_seconds,
+                        on_progress=thread_safe_progress,
+                    ),
+                    failures,
+                )
+            except LLMError as exc:
+                failures.append(
+                    {
+                        "model": primary.name,
+                        "kind": exc.kind,
+                        "message": str(exc),
+                        "details": exc.details,
+                        "phase": "primary_recovery",
+                    }
+                )
+                return None, failures
+
+        safe_emit(
+            "verification_speculative_started",
+            f"Running {primary.name} reasoning-recovery in parallel with a fresh "
+            f"review on {backup.name} for a quality cross-check",
+            primary_model=primary.name,
+            backup_model=backup.name,
+        )
+
+        primary_result: dict[str, Any] | None = None
+        backup_result: dict[str, Any] | None = None
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            primary_future = executor.submit(
+                self._recover_from_reasoning_chain,
+                model_config=primary,
+                reasoning_text=primary_reasoning,
+                question=question,
+                original_protocol=original_protocol,
+                api_key=api_key,
+                timeout_seconds=timeout_seconds,
+                on_progress=thread_safe_progress,
+            )
+            backup_future = executor.submit(
+                self._full_review_chain,
+                model_config=backup,
+                question=question,
+                original_protocol=original_protocol,
+                api_key=api_key,
+                timeout_seconds=timeout_seconds,
+                on_progress=thread_safe_progress,
+            )
+            try:
+                primary_result = primary_future.result()
+            except LLMError as exc:
+                failures.append(
+                    {
+                        "model": primary.name,
+                        "kind": exc.kind,
+                        "message": str(exc),
+                        "details": exc.details,
+                        "phase": "primary_recovery",
+                    }
+                )
+            try:
+                backup_result = backup_future.result()
+            except LLMError as exc:
+                failures.append(
+                    {
+                        "model": backup.name,
+                        "kind": exc.kind,
+                        "message": str(exc),
+                        "details": exc.details,
+                        "phase": "backup_full_chain",
+                    }
+                )
+
+        safe_emit(
+            "verification_speculative_completed",
+            f"Speculative round done — primary={'ok' if primary_result else 'fail'}, "
+            f"backup={'ok' if backup_result else 'fail'}",
+            primary_model=primary.name,
+            backup_model=backup.name,
+            primary_succeeded=primary_result is not None,
+            backup_succeeded=backup_result is not None,
+        )
+
+        if primary_result is not None and backup_result is not None:
+            disagreements = self._cross_check_protocols(primary_result, backup_result)
+            if disagreements:
+                safe_emit(
+                    "verification_disagreement",
+                    f"Primary ({primary.name}) and backup ({backup.name}) disagree on "
+                    f"{len(disagreements)} field(s): {', '.join(disagreements)}",
+                    primary_model=primary.name,
+                    backup_model=backup.name,
+                    disagreed_fields=disagreements,
+                )
+                primary_result = self._attach_disagreement_warning(
+                    primary_result,
+                    primary=primary,
+                    backup=backup,
+                    backup_protocol=backup_result,
+                    disagreements=disagreements,
+                )
+            return primary_result, failures
+
+        if primary_result is not None:
+            return primary_result, failures
+        if backup_result is not None:
+            return backup_result, failures
+        return None, failures
+
+    # Load-bearing fields where reviewer disagreement materially changes the
+    # study. Disagreements here surface as warnings for clinician review.
+    _CROSS_CHECK_FIELDS: tuple[tuple[str, ...], ...] = (
+        ("study_type",),
+        ("target_cohort", "label"),
+        ("target_cohort", "index_event", "event_type"),
+        ("target_cohort", "index_event", "occurrence"),
+        ("target_cohort", "demographic_filters", "age", "min"),
+        ("target_cohort", "demographic_filters", "age", "max"),
+        ("comparator", "enabled"),
+        ("outcome", "required"),
+        ("outcome", "label"),
+        ("outcome", "incident_only"),
+        ("outcome", "clean_period_days"),
+        ("time_windows", "time_at_risk", "start_anchor"),
+        ("time_windows", "time_at_risk", "end_anchor"),
+        ("time_windows", "time_at_risk", "censor_on_outcome"),
+        ("time_windows", "prior_observation", "min_prior_observation_days"),
+    )
+
+    def _cross_check_protocols(
+        self, primary: dict[str, Any], backup: dict[str, Any]
+    ) -> list[str]:
+        disagreements: list[str] = []
+        for path in self._CROSS_CHECK_FIELDS:
+            if self._get_nested(primary, path) != self._get_nested(backup, path):
+                disagreements.append(".".join(path))
+        return disagreements
+
+    @staticmethod
+    def _get_nested(obj: Any, path: tuple[str, ...]) -> Any:
+        for key in path:
+            if not isinstance(obj, dict):
+                return None
+            obj = obj.get(key)
+        return obj
+
+    def _attach_disagreement_warning(
+        self,
+        protocol: dict[str, Any],
+        *,
+        primary: VeniceModelConfig,
+        backup: VeniceModelConfig,
+        backup_protocol: dict[str, Any],
+        disagreements: list[str],
+    ) -> dict[str, Any]:
+        protocol = deepcopy(protocol)
+        protocol.setdefault("issues", {"warnings": [], "blocking_errors": []})
+        protocol["issues"].setdefault("warnings", [])
+        backup_values = {
+            field_path: self._get_nested(backup_protocol, tuple(field_path.split(".")))
+            for field_path in disagreements
+        }
+        primary_values = {
+            field_path: self._get_nested(protocol, tuple(field_path.split(".")))
+            for field_path in disagreements
+        }
+        protocol["issues"]["warnings"].append(
+            {
+                "code": "REVIEWER_DISAGREEMENT",
+                "message": (
+                    f"Primary reviewer ({primary.name}) and backup reviewer "
+                    f"({backup.name}) disagreed on {len(disagreements)} "
+                    f"clinically load-bearing field(s). Primary's interpretation "
+                    f"was kept; clinician should reconcile before execution."
+                ),
+                "field_path": None,
+                "details": {
+                    "primary_model": primary.name,
+                    "backup_model": backup.name,
+                    "disagreed_fields": disagreements,
+                    "primary_values": primary_values,
+                    "backup_values": backup_values,
+                },
+            }
+        )
+        return protocol
 
     def _build_verification_messages(self, question: str, protocol: dict[str, Any]) -> list[dict[str, str]]:
         schema_text = json.dumps(self.schema, ensure_ascii=False)
@@ -746,64 +1045,98 @@ class ProtocolLLMGenerator:
         on_progress: Callable[[dict], None] | None = None,
     ) -> dict[str, Any]:
         formatter_models = self.config.models or [VeniceModelConfig(name="zai-org-glm-5", retries=1)]
+        # Race formatter models in parallel — first valid candidate wins; in-flight
+        # losers cannot be cancelled (sync requests) so their results are discarded.
+        emit_lock = Lock()
+
+        def _safe_emit(event: str, message: str, **fields: Any) -> None:
+            if on_progress is None:
+                return
+            with emit_lock:
+                self._emit(on_progress, event, message, **fields)
+
+        formatter_messages = self._build_reasoning_formatter_messages(
+            question=question,
+            original_protocol=original_protocol,
+            reasoning_text=reasoning_text,
+        )
+
+        def _attempt(model_config: VeniceModelConfig, attempt: int, attempts: int) -> dict[str, Any]:
+            _safe_emit(
+                "verification_call_started",
+                f"Reformatting reasoning via {model_config.name} "
+                f"(attempt {attempt}/{attempts}) [parallel]",
+                model=model_config.name,
+                phase="format",
+                timeout_seconds=timeout_seconds,
+            )
+            t0 = time.monotonic()
+            response_text = self._call_venice_api(
+                api_key=api_key,
+                model_config=model_config,
+                messages=formatter_messages,
+                timeout_seconds=timeout_seconds,
+            )
+            elapsed = round(time.monotonic() - t0, 2)
+            _safe_emit(
+                "verification_call_completed",
+                f"{model_config.name} formatter responded ({elapsed}s)",
+                model=model_config.name,
+                phase="format",
+                elapsed_seconds=elapsed,
+            )
+            candidate = self._parse_json_response(response_text)
+            candidate["original_question"] = question
+            candidate = self._apply_pre_mapping_defaults(candidate, question)
+            self._validate_protocol(candidate)
+            return candidate
+
+        max_attempts = max((max(1, min(mc.retries, 2)) for mc in formatter_models), default=1)
         failures: list[dict[str, Any]] = []
-        for model_config in formatter_models:
-            attempts = max(1, min(model_config.retries, 2))
-            for attempt in range(1, attempts + 1):
-                try:
-                    self._emit(
-                        on_progress,
-                        "verification_call_started",
-                        f"Reformatting reasoning via {model_config.name} "
-                        f"(attempt {attempt}/{attempts})",
-                        model=model_config.name,
-                        phase="format",
-                        timeout_seconds=timeout_seconds,
-                    )
-                    t0 = time.monotonic()
-                    response_text = self._call_venice_api(
-                        api_key=api_key,
-                        model_config=model_config,
-                        messages=self._build_reasoning_formatter_messages(
-                            question=question,
-                            original_protocol=original_protocol,
-                            reasoning_text=reasoning_text,
-                        ),
-                        timeout_seconds=timeout_seconds,
-                    )
-                    elapsed = round(time.monotonic() - t0, 2)
-                    self._emit(
-                        on_progress,
-                        "verification_call_completed",
-                        f"{model_config.name} formatter responded ({elapsed}s)",
-                        model=model_config.name,
-                        phase="format",
-                        elapsed_seconds=elapsed,
-                    )
-                    candidate = self._parse_json_response(response_text)
-                    candidate["original_question"] = question
-                    candidate = self._apply_pre_mapping_defaults(candidate, question)
-                    self._validate_protocol(candidate)
-                    self._emit(
-                        on_progress,
-                        "verification_succeeded",
-                        f"Clinical review complete via reasoning formatter "
-                        f"({model_config.name})",
-                        model=model_config.name,
-                        attempt=attempt,
-                        phase="format",
-                    )
-                    return candidate
-                except LLMError as exc:
-                    failures.append(
-                        {
-                            "model": model_config.name,
-                            "attempt": attempt,
-                            "kind": exc.kind,
-                            "message": str(exc),
-                            "details": exc.details,
-                        }
-                    )
+        for attempt in range(1, max_attempts + 1):
+            participants = [
+                mc for mc in formatter_models if max(1, min(mc.retries, 2)) >= attempt
+            ]
+            if not participants:
+                break
+            with ThreadPoolExecutor(max_workers=len(participants)) as executor:
+                future_to_model = {
+                    executor.submit(
+                        _attempt, mc, attempt, max(1, min(mc.retries, 2))
+                    ): mc
+                    for mc in participants
+                }
+                pending = set(future_to_model)
+                winner: dict[str, Any] | None = None
+                while pending and winner is None:
+                    done, pending = wait(pending, return_when=FIRST_COMPLETED)
+                    for fut in done:
+                        mc = future_to_model[fut]
+                        try:
+                            winner = fut.result()
+                            _safe_emit(
+                                "verification_succeeded",
+                                f"Clinical review complete via reasoning formatter "
+                                f"({mc.name})",
+                                model=mc.name,
+                                attempt=attempt,
+                                phase="format",
+                            )
+                            break
+                        except LLMError as exc:
+                            failures.append(
+                                {
+                                    "model": mc.name,
+                                    "attempt": attempt,
+                                    "kind": exc.kind,
+                                    "message": str(exc),
+                                    "details": exc.details,
+                                }
+                            )
+                if winner is not None:
+                    for fut in pending:
+                        fut.cancel()
+                    return winner
         raise LLMError(
             "Could not convert verifier reasoning into a valid reviewed protocol.",
             kind="verification_reasoning_formatter_failed",
